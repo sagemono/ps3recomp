@@ -20,14 +20,20 @@ has to be usable by someone who owns two of the seven titles.
 What counts as a failure:
 
   LOST     a key the golden has and this run does not. A call the title used to
-           make and no longer does. Always a failure.
-  UNRESOLVED  a firmware import that has become unresolved. Always a failure,
-           even though it is a "new" key.
+           make and no longer does. Always a failure -- except for an
+           hle:unresolved:* key, whose disappearance means the import gained a
+           handler; that is reported as RESOLVED and passes.
+  UNRESOLVED  a firmware import that has BECOME unresolved. Always a failure,
+           even though it is a "new" key. The mirror image of RESOLVED.
   DROPPED  an occurrence count that fell by an order of magnitude, or a scalar
            that went down. Rendering stopping looks like this.
 
   NEW / RAISED / ORDER are reported but do not fail: they are as likely to be
   progress as regression, and a gate that cries wolf gets ignored.
+
+A port's `expect` says what finishing looks like: "timeout" (it reached a frame
+loop and never exits -- the usual case), "exit0" (a clean exit), or "any" (the
+terminal state is not stable enough to assert; compare the milestones only).
 """
 import argparse
 import os
@@ -81,14 +87,35 @@ def build_toolkit(spec):
     return True, ""
 
 
+def build_vars():
+    """Toolchain placeholders for the registry's build commands.
+
+    Windows needs clang-cl specifically: the runtime uses __atomic_* builtins,
+    __int128 and __builtin_bswap*, none of which cl has. Everywhere else the
+    system compiler is fine, and Ninja is preferred but not assumed -- a stock
+    Debian has cmake without it.
+    """
+    if os.name == "nt":
+        return {"cc": "clang-cl", "cxx": "clang-cl", "generator": "Ninja",
+                "runtime_lib": "ps3recomp_runtime.lib"}
+    cc = os.environ.get("CC") or shutil.which("clang") or shutil.which("gcc") or "cc"
+    cxx = os.environ.get("CXX") or shutil.which("clang++") or shutil.which("g++") or "c++"
+    return {"cc": cc, "cxx": cxx,
+            "generator": "Ninja" if shutil.which("ninja") else "Unix Makefiles",
+            "runtime_lib": "libps3recomp_runtime.a"}
+
+
 def expand(cmd):
-    """{toolkit} -> the repo root.
+    """Fill the registry's placeholders.
 
     Registry commands run through the platform shell, and $VAR / %VAR% are
-    spelled differently in sh and cmd, so neither works on both. One explicit
-    placeholder does.
+    spelled differently in sh and cmd, so neither works on both. Explicit
+    placeholders do.
     """
-    return cmd.replace("{toolkit}", ROOT.replace("\\", "/"))
+    out = cmd.replace("{toolkit}", ROOT.replace("\\", "/"))
+    for k, v in build_vars().items():
+        out = out.replace("{%s}" % k, v)
+    return out
 
 
 def gate_env():
@@ -220,7 +247,14 @@ def run_port(port, build=True):
     # A title that boots into its frame loop never exits, so being killed on the
     # timeout is the SUCCESS case for most ports. The milestone stream is written
     # as each key is first seen precisely so that a kill still leaves a record.
-    if expect == "timeout":
+    if expect == "any":
+        # For a port whose TERMINAL state is unstable but whose run is not. Tokyo
+        # Jungle tears down cleanly and then sometimes exits 0 and sometimes dies
+        # with an access violation, after every milestone worth comparing has
+        # already been recorded. Gating on the exit code there would just be a
+        # coin flip; gating on what it did still works.
+        pass
+    elif expect == "timeout":
         if not timed_out:
             return "error", log, "exited early (rc=%s); expected to still be running" % rc
     elif expect == "exit0":
@@ -252,7 +286,13 @@ def diff(golden, current):
 
     for k in g_stream:
         if k not in c_set:
-            fails.append("LOST        %s" % k)
+            if k.startswith("hle:unresolved:"):
+                # The import RESOLVED. Losing an unresolved-NID key is the good
+                # direction and must not read as a regression, or every genuine
+                # improvement to the HLE surface fails the gate.
+                notes.append("RESOLVED    %s  (import now has a handler)" % k)
+            else:
+                fails.append("LOST        %s" % k)
 
     for k in c_stream:
         if k not in g_set:

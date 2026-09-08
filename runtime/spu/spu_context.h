@@ -33,8 +33,8 @@ extern "C" {
 
 /* ---------------------------------------------------------------------------
  * Reusable env-driven LS watchpoint (mini-debugger, no rebuild to retarget).
- *   LBP_SPU_WATCH=0x1BE80        watch one 16-byte LS line (reads + writes)
- *   LBP_SPU_WATCH=0x1BE80,0x927D80  up to 4 comma-separated addresses
+ *   SPU_LS_WATCH=0x1BE80        watch one 16-byte LS line (reads + writes)
+ *   SPU_LS_WATCH=0x1BE80,0x927D80  up to 4 comma-separated addresses
  * Fires from every SPU image's spu_ls_read128/write128. Cheap: one cached
  * compare on the hot path when disabled.
  * -----------------------------------------------------------------------*/
@@ -43,7 +43,7 @@ static inline unsigned* spu_ls_watch_list(int* out_n) {
     static int init = 0; static unsigned addr[SPU_WATCH_MAX]; static int n = 0;
     if (!init) {
         init = 1;
-        const char* e = getenv("LBP_SPU_WATCH");
+        const char* e = getenv("SPU_LS_WATCH");
         while (e && *e && n < SPU_WATCH_MAX) {
             addr[n++] = (unsigned)strtoul(e, (char**)&e, 0) & ~0xFu;
             while (*e == ',' || *e == ' ') e++;
@@ -282,7 +282,7 @@ typedef struct spu_context {
     uint32_t steps;
     int      module_img_a00;
 
-    /* SPU lockstep gate (spu_lockstep.c; env YZ_SPU_LOCKSTEP, default off).
+    /* SPU lockstep gate (spu_lockstep.c; env SPU_LOCKSTEP, default off).
      * quantum_ctr counts tick sites toward a token handoff; release_tb stamps
      * the guest-timebase moment this ctx last released the token. dec_start_tb
      * is the lockstep decrementer-freeze anchor (written only while armed). */

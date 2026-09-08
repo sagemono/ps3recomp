@@ -474,7 +474,7 @@ static int perf_on(void)
     if (v < 0) { const char* e = getenv("PERF"); v = e ? atoi(e) : 0; }
     return v;
 }
-/* DBG_LOCK: running clip-space centroid of the tracked mesh (DUCK_VTX's
+/* DBG_LOCK: running clip-space centroid of the tracked mesh (RSX_DBG_VTX's
  * texture), so the debug camera can follow it. The ducks are driven by the
  * physics sim and drift every frame, so a fixed DBG_CENTER loses them as soon
  * as the magnification is high enough to make one recognisable. */
@@ -1751,12 +1751,12 @@ static int vp_get_vs(const rsx_state* st)
     if (getenv("VP_DUMP")) { static int _d=0; if (_d++ < 4) {
         FILE* f = fopen("vp2_dump.hlsl", _d==1 ? "w" : "a");
         if (f) { fprintf(f, "/* per-draw VS hash pending, %d instrs */%s%s", ni, hlsl, "\n"); fclose(f); } } }
-    /* DUCK_VP=<hex tex0 offset>: write the vertex program belonging to the draws
+    /* RSX_DBG_VP=<hex tex0 offset>: write the vertex program belonging to the draws
      * that bind that texture. vp2_dump.hlsl holds whichever four programs were
      * compiled first, which need not include the one under investigation -- and
      * reading the wrong program sends you chasing the wrong constants. */
     { static const char* dp = (const char*)1; static u32 wantp = 0; static int done = 0;
-      if (dp == (const char*)1) { dp = getenv("DUCK_VP");
+      if (dp == (const char*)1) { dp = getenv("RSX_DBG_VP");
                                   wantp = dp ? (u32)strtoul(dp, NULL, 16) : 0; }
       if (wantp && !done && s_d3d.cur_texs[0].raw == wantp) {
           done = 1;
@@ -1944,14 +1944,14 @@ static void hlsl_replace_all(char* buf, size_t cap, const char* find, const char
 /* Which of a draw's texture units are cube textures, as a 4-bit mask. */
 static u32 dr_cube_mask(const D3D12DrawRecord* dr)
 {
-    /* ON by default (CUBE_TEX=0 to disable). This was off while the cube path
+    /* ON by default (RSX_CUBE_TEX=0 to disable). This was off while the cube path
      * cost 2262 PSO misses per 20 frames and 0.38 fps -- both caused by inline
      * fragment-program constants baking into the shader source. With those
      * constants hoisted into b1 the cube path costs 0 PSO misses, and with the
      * per-face stride fixed (each face is a whole mip pyramid, not one mip-0
      * image) all six faces decode as clean environment art. */
     static int en = -1;
-    if (en < 0) { const char* e = getenv("CUBE_TEX"); en = e ? atoi(e) : 1; }
+    if (en < 0) { const char* e = getenv("RSX_CUBE_TEX"); en = e ? atoi(e) : 1; }
     if (!en) return 0;
     u32 m = 0;
     for (int u = 0; u < 4; u++) if (dr->tex[u].set && dr->tex[u].cube) m |= 1u << u;
@@ -3123,13 +3123,13 @@ static void vp_record_cb(u32 slot, int vs_idx, const D3D12DrawRecord* dr)
                 slot, last_nz,
                 c[260*4+0], c[260*4+1], c[260*4+2], c[260*4+3],
                 c[467*4+0], c[467*4+1], c[467*4+2], c[467*4+3]); } }
-    /* DUCK_CB=<hex tex0 offset>: the constants as they land in the per-draw
+    /* RSX_DBG_CB=<hex tex0 offset>: the constants as they land in the per-draw
      * constant buffer for that texture's draws -- i.e. exactly what the shader
      * samples, not what the CPU-side rsx_state holds. Those two agreeing is an
      * assumption worth checking directly when a draw transforms to nothing. */
     const float* vpx_dbg = (const float*)(dst + RSX_MAX_VERTEX_CONSTANTS * 16);
     { static const char* dc = (const char*)1; static u32 wantc = 0; static int n = 0;
-      if (dc == (const char*)1) { dc = getenv("DUCK_CB");
+      if (dc == (const char*)1) { dc = getenv("RSX_DBG_CB");
                                   wantc = dc ? (u32)strtoul(dc, NULL, 16) : 0; }
       if (wantc && dr && dr->tex[0].raw == wantc && n < 4) { n++;
           const float* c = (const float*)dst;
@@ -4738,13 +4738,13 @@ static void render_frame(void)
         }
     }
     { static int dt = -1;
-      if (dt < 0) { const char* e = getenv("DUCKTRACK"); dt = e ? atoi(e) : 0; }
+      if (dt < 0) { const char* e = getenv("RSX_DBG_TRACK"); dt = e ? atoi(e) : 0; }
       if (dt) { static int fr = 0; fr++;
         if (s_lock_n)
-            fprintf(stderr, "[DUCKTRACK] frame %d: %u duck draws, ndc=(%.3f,%.3f)%c",
+            fprintf(stderr, "[RSX_DBG_TRACK] frame %d: %u duck draws, ndc=(%.3f,%.3f)%c",
                     fr, s_lock_n, (float)(s_lock_sx/s_lock_n), (float)(s_lock_sy/s_lock_n), 10);
         else if (fr % 20 == 0)
-            fprintf(stderr, "[DUCKTRACK] frame %d: NO duck draws%c", fr, 10);
+            fprintf(stderr, "[RSX_DBG_TRACK] frame %d: NO duck draws%c", fr, 10);
       } }
     if (s_lock_n) {                       /* publish this frame's centroid */
         s_lock_x = (float)(s_lock_sx / s_lock_n);
@@ -5610,12 +5610,12 @@ static u32 upload_tris_vp(const rsx_state* state, u32 first, u32 count)
           fprintf(stderr, "[IDXDBG] tris first=%u count=%u a0off=0x%X stride=%u%c",
                   first, count, state->vertex_attribs[0].offset,
                   state->vertex_attribs[0].stride, 10); } }
-    /* DUCK_VTX=<hex tex0 offset>: dump attribute-0 positions for the draws that
+    /* RSX_DBG_VTX=<hex tex0 offset>: dump attribute-0 positions for the draws that
      * bind that texture. The duck's texture resolves and its 9960 draws all
      * target the backbuffer, yet none of its texels reach the screen -- so the
      * question is whether its vertices are where they should be. */
     { static const char* dv = (const char*)1; static u32 want = 0; static int n = 0;
-      if (dv == (const char*)1) { dv = getenv("DUCK_VTX");
+      if (dv == (const char*)1) { dv = getenv("RSX_DBG_VTX");
                                   want = dv ? (u32)strtoul(dv, NULL, 16) : 0; }
       if (want && s_d3d.cur_texs[0].raw == want && n < 6) { n++;
         fprintf(stderr, "[DUCKVTX] first=%u count=%u", first, count);
@@ -5768,24 +5768,24 @@ static u32 upload_tris_vp_indexed(const rsx_state* state, u32 first, u32 count)
                   state->vertex_attribs[0].offset, state->vertex_attribs[0].stride, 10); } } }
     /* DBG_LOCK tracking: projected centroid of this mesh, updated every draw. */
     { static const char* dl = (const char*)1; static u32 wantl = 0; static int mvpb = 256;
-      if (dl == (const char*)1) { dl = getenv("DUCK_VTX");
+      if (dl == (const char*)1) { dl = getenv("RSX_DBG_VTX");
                                   wantl = dl ? (u32)strtoul(dl, NULL, 16) : 0;
                                   const char* mb = getenv("MVP_BASE");
                                   if (mb) mvpb = atoi(mb); }
-      /* DUCKTRACK=1 tracks the content-identified duck without needing its
+      /* RSX_DBG_TRACK=1 tracks the content-identified duck without needing its
        * offset passed in (VRAM offsets move between runs). Re-read every call:
        * s_duck_raw is filled by the texture upload, which happens AFTER the
        * first draws, so caching it once left the tracker watching offset 0. */
       { static int dtrk = -1;
-        if (dtrk < 0) { const char* e = getenv("DUCKTRACK"); dtrk = e ? atoi(e) : 0; }
+        if (dtrk < 0) { const char* e = getenv("RSX_DBG_TRACK"); dtrk = e ? atoi(e) : 0; }
         if (dtrk && s_duck_raw) wantl = s_duck_raw; }
-      /* DUCK_PICK=<first>: track ONLY the draw with that starting index. The
+      /* RSX_DBG_PICK=<first>: track ONLY the draw with that starting index. The
        * mesh is one big vertex buffer sliced into 256-index chunks, so averaging
        * across all of them converges on the centre of the whole field -- which is
        * where there is nothing in particular. A single slice is a stable target
        * and can be magnified without drifting off it. */
       static int pick = -1;
-      if (pick < 0) { const char* e = getenv("DUCK_PICK"); pick = e ? atoi(e) : -2; }
+      if (pick < 0) { const char* e = getenv("RSX_DBG_PICK"); pick = e ? atoi(e) : -2; }
       if (wantl && s_d3d.cur_texs[0].raw == wantl && count
           && (pick == -2 || (int)first == pick)) {
           double sx = 0, sy = 0, sz = 0;
@@ -5808,17 +5808,17 @@ static u32 upload_tris_vp_indexed(const rsx_state* state, u32 first, u32 count)
               }
           }
       } }
-    /* DUCK_SCALE=<f>: multiply attribute-0 positions for the draws binding
-     * DUCK_VTX's texture. The duck's object-space bbox is ~0.2 units and its
+    /* RSX_DBG_SCALE=<f>: multiply attribute-0 positions for the draws binding
+     * RSX_DBG_VTX's texture. The duck's object-space bbox is ~0.2 units and its
      * draws rasterize only a few dozen pixels per frame -- sub-pixel. Growing it
      * about its own origin tests the rest of the chain (index buffer, texture,
      * per-draw transform): if a duck-shaped, duck-coloured object appears, only
      * the scale is wrong. Diagnostic. */
     { static const char* ds = (const char*)1; static float sc = 0.0f;
-      if (ds == (const char*)1) { ds = getenv("DUCK_SCALE");
+      if (ds == (const char*)1) { ds = getenv("RSX_DBG_SCALE");
                                   sc = ds ? (float)atof(ds) : 0.0f; }
       static const char* dv2 = (const char*)1; static u32 want2 = 0;
-      if (dv2 == (const char*)1) { dv2 = getenv("DUCK_VTX");
+      if (dv2 == (const char*)1) { dv2 = getenv("RSX_DBG_VTX");
                                    want2 = dv2 ? (u32)strtoul(dv2, NULL, 16) : 0; }
       if (sc > 0.0f && want2 && s_d3d.cur_texs[0].raw == want2 && count) {
         /* Magnify about a FIXED point captured from the first tracked draw, not
@@ -5826,12 +5826,12 @@ static u32 upload_tris_vp_indexed(const rsx_state* state, u32 first, u32 count)
          * chunk of the mesh on top of the others. Combined with VP_BYPASS (which
          * maps attribute 0 straight to clip space) this renders the mesh's real
          * geometry and texture at a readable size. */
-        /* DUCK_RECENTER=1: recentre EVERY chunk on its own centroid, overlaying
+        /* RSX_DBG_RECENTER=1: recentre EVERY chunk on its own centroid, overlaying
          * them. If each chunk is one instance of the same mesh they align into a
          * single silhouette; if they are arbitrary slices of one big mesh they
          * smear. Either way the answer is visible at a glance. */
         static int recen = -1;
-        if (recen < 0) { const char* e = getenv("DUCK_RECENTER"); recen = e ? atoi(e) : 0; }
+        if (recen < 0) { const char* e = getenv("RSX_DBG_RECENTER"); recen = e ? atoi(e) : 0; }
         static int have_c = 0; static float ox = 0, oy = 0, oz = 0;
         if (!have_c || recen) {
             double sx = 0, sy = 0, sz = 0;
@@ -5842,12 +5842,12 @@ static u32 upload_tris_vp_indexed(const rsx_state* state, u32 first, u32 count)
             have_c = 1;
         }
         for (u32 k = 0; k < count; k++) {
-            /* DUCK_SHIFT="dx,dy": nudge after scaling. VP_BYPASS applies the
+            /* RSX_DBG_SHIFT="dx,dy": nudge after scaling. VP_BYPASS applies the
              * guest's posoffset, so a recentred mesh does not land at screen
              * centre -- without this the magnified geometry sits clipped against
              * the top edge. */
             static int shf = -1; static float dx = 0.0f, dy = 0.0f;
-            if (shf < 0) { const char* e = getenv("DUCK_SHIFT");
+            if (shf < 0) { const char* e = getenv("RSX_DBG_SHIFT");
                            if (e) { double a=0,b=0; sscanf(e, "%lf,%lf", &a, &b);
                                     dx = (float)a; dy = (float)b; }
                            shf = 1; }
@@ -5859,11 +5859,11 @@ static u32 upload_tris_vp_indexed(const rsx_state* state, u32 first, u32 count)
             (void)oz;
         }
       } }
-    /* DUCK_VTX=<hex tex0 offset>: attribute-0 positions for the draws binding
+    /* RSX_DBG_VTX=<hex tex0 offset>: attribute-0 positions for the draws binding
      * that texture (see upload_tris_vp). The duck's meshes are indexed, so this
      * is the copy that actually fires for it. */
     { static const char* dv = (const char*)1; static u32 want = 0; static int n = 0;
-      if (dv == (const char*)1) { dv = getenv("DUCK_VTX");
+      if (dv == (const char*)1) { dv = getenv("RSX_DBG_VTX");
                                   want = dv ? (u32)strtoul(dv, NULL, 16) : 0; }
       if (want && s_d3d.cur_texs[0].raw == want && n < 8) { n++;
         float mnx=1e30f,mny=1e30f,mnz=1e30f,mxx=-1e30f,mxy=-1e30f,mxz=-1e30f;

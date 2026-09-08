@@ -226,7 +226,7 @@ cmake --build build --target ps3recomp_host
 
 ### `RSX_LIVE_DRAW` is not required
 
-`RSX_LIVE_DRAW=1` (alias `YZ_RSX_DRAW`) selects an **alternative** draw engine
+`RSX_LIVE_DRAW=1` selects an **alternative** draw engine
 contributed from a downstream fork, not the normal renderer. It is **off by
 default** and the D3D12 backend is used instead. You do not need to set it to
 get a picture, and setting it changes which draw path executes -- so leave it

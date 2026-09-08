@@ -35,7 +35,7 @@ void* volatile    g_pm_flow_ctx = 0;
  * forever and the ring deadlocks (scan re-bails at LS 0x2318). When we observe
  * that bail spin, the in-flight loads HAVE in fact completed in our model, so
  * set the done bit on the pending records -- the faithful sync equivalent of
- * the completion interrupt. Env LBP_JOBDRAIN (default off while validating). */
+ * the completion interrupt. Env SPU_JOBDRAIN (default off while validating). */
 extern void spu_halt(spu_context*);
 void spu_task_launch_check(spu_context* ctx, void* fn)
 {
@@ -98,7 +98,7 @@ void spu_task_launch_check(spu_context* ctx, void* fn)
         g_pm_flow_buf[g_pm_flow_n++] = ctx->pc;
 
     static int s_on = -1;
-    if (s_on < 0) s_on = getenv("LBP_JOBDRAIN") ? 1 : 0;
+    if (s_on < 0) s_on = getenv("SPU_JOBDRAIN") ? 1 : 0;
     if (!s_on || ctx->image_id != 2 || !ctx->policy_mode) return;
 
     /* 0x2318 = the type-2 load's ring-full bail (resets scan, retries). */

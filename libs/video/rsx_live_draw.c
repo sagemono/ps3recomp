@@ -13,7 +13,7 @@
  *     not a private arena;
  *   - present goes to a swap chain bound to the runtime's window, not a PPM
  *     readback;
- *   - the whole engine is gated behind YZ_RSX_DRAW (default ON; "0" = off).
+ *   - the whole engine is gated behind RSX_DRAW (default ON; "0" = off).
  *
  * Clean-room: NV40 ISA/register facts from envytools rnndb + Mesa nv30 +
  * psdevwiki; RPCS3 as a read-only fact oracle only.
@@ -260,7 +260,7 @@ typedef struct {
 } shader_disk_cache_header;
 
 typedef struct {
-    int              enabled;    /* YZ_RSX_DRAW resolved                     */
+    int              enabled;    /* RSX_DRAW resolved                     */
     int              ready;      /* device + resources up                    */
 
     ID3D12Device*              dev;
@@ -579,7 +579,7 @@ static void ld_present_measure_init(void)
     memset(g_ld_present_ring, 0, sizeof(g_ld_present_ring));
     g_ld_present_total = 0;
     g_ld_present_dumped = 0;
-    g_ld_schedule_diag = getenv("YZ_SCHEDULE_DIAG") != NULL;
+    g_ld_schedule_diag = getenv("RSX_SCHEDULE_DIAG") != NULL;
     if (QueryPerformanceFrequency(&frequency))
         g_ld_qpc_frequency = frequency.QuadPart;
     else
@@ -641,10 +641,10 @@ static void ld_present_measure_record(u32 guest_frame)
         static u32 sample_end = 2178u;
         if (sample_present < 0) {
             sample_present =
-                getenv("YZ_PPU_SAMPLE_RUN") != NULL &&
-                getenv("YZ_PPU_SAMPLE_PRESENT") != NULL;
-            const char* start_text = getenv("YZ_PPU_SAMPLE_START");
-            const char* frames_text = getenv("YZ_PPU_SAMPLE_FRAMES");
+                getenv("PPU_SAMPLE_RUN") != NULL &&
+                getenv("PPU_SAMPLE_PRESENT") != NULL;
+            const char* start_text = getenv("PPU_SAMPLE_START");
+            const char* frames_text = getenv("PPU_SAMPLE_FRAMES");
             if (start_text) {
                 const unsigned long parsed = strtoul(start_text, NULL, 0);
                 if (parsed <= UINT32_MAX)
@@ -1224,10 +1224,9 @@ int rsx_live_draw_enabled(void)
         /* Opt-in in this tree. Upstream (caner's Yakuza fork) defaults this ON
          * because that runner has no other renderer; here rsx_d3d12_backend.c
          * is still the default for every other title, so the live engine has
-         * to be asked for. RSX_LIVE_DRAW is the portable spelling; YZ_RSX_DRAW
-         * is kept so his runner's scripts still work. */
+         * to be asked for. (The YZ_RSX_DRAW alias his scripts used went with
+         * the title-hack drain; RSX_LIVE_DRAW is the one spelling.) */
         const char* e = getenv("RSX_LIVE_DRAW");
-        if (!e) e = getenv("YZ_RSX_DRAW");
         cached = (e && e[0] != '0') ? 1 : 0;
     }
     return cached;
@@ -1738,7 +1737,7 @@ static void ld_flush(ld_flush_reason reason)
  * RSXThread.cpp), so the game's REF poll advances only after the GPU has really
  * caught up. Without it our async consumer writes REF instantly and races ahead
  * of real GPU time (measured: ours skips the fence wait RPCS3 performs). Gated
- * at the call site by YZ_RSX_FENCE_SYNC. */
+ * at the call site by RSX_FENCE_SYNC. */
 void rsx_live_draw_flush(void)
 {
     if (g.ready) ld_flush(LD_FLUSH_GUEST_REFERENCE);
@@ -2377,7 +2376,7 @@ static u32 texture_srv_slot(const rsx_dsp_texture* t)
     const u32 remap = t->remap & 0xFFFF;
     static int refresh_enabled = -1;
     if (refresh_enabled < 0)
-        refresh_enabled = getenv("YZ_RSX_NO_TEX_REFRESH") ? 0 : 1;
+        refresh_enabled = getenv("RSX_NO_TEX_REFRESH") ? 0 : 1;
 
     for (u32 i = 0; i < g.n_textures; i++) {
         texcache_t* entry = &g.textures[i];
@@ -2574,7 +2573,7 @@ static int vertex_texture_trace_enabled(void)
 {
     static int enabled = -1;
     if (enabled < 0)
-        enabled = getenv("YZ_VTEX_TRACE") ? 1 : 0;
+        enabled = getenv("RSX_VTEX_TRACE") ? 1 : 0;
     return enabled;
 }
 
@@ -3161,12 +3160,12 @@ static int shader_disk_cache_prepare(void)
     if (g_ld_shader_disk_ready >= 0)
         return g_ld_shader_disk_ready;
     g_ld_shader_disk_ready = 0;
-    if (getenv("YZ_RSX_NO_SHADER_DISK_CACHE")) {
+    if (getenv("RSX_NO_SHADER_DISK_CACHE")) {
         fprintf(stderr, "[shader-disk-cache] disabled\n");
         return 0;
     }
 
-    const char* override_dir = getenv("YZ_RSX_SHADER_CACHE_DIR");
+    const char* override_dir = getenv("RSX_SHADER_CACHE_DIR");
     if (override_dir && override_dir[0]) {
         if (snprintf(g_ld_shader_disk_dir, sizeof(g_ld_shader_disk_dir),
                      "%s", override_dir) < 0 ||
@@ -3889,10 +3888,10 @@ static ID3D12PipelineState* get_pso(
      * SHADER_CONTROL word bit 0x40 (same fix as the replay harness — the
      * AUTO heuristic returned stale fp32 scratch for h0-writing materials);
      * fold the deciding bit into the cache key so a program reused under a
-     * different export mode gets its own PSO. Kill-switch YZ_FP_CTRL_AUTO=1
+     * different export mode gets its own PSO. Kill-switch RSX_FP_CTRL_AUTO=1
      * restores the old heuristic for the A/B. */
     static int ctrl_auto = -1;
-    if (ctrl_auto < 0) ctrl_auto = getenv("YZ_FP_CTRL_AUTO") ? 1 : 0;
+    if (ctrl_auto < 0) ctrl_auto = getenv("RSX_FP_CTRL_AUTO") ? 1 : 0;
     const u32 fp_ctrl = ctrl_auto ? RSX_FP_CTRL_AUTO : rsx_dsp_shader_control(&g.rsx);
     u32 cube_mask = 0;
     for (u32 unit = 0; unit < RSX_DSP_NUM_TEXTURES; unit++) {
@@ -4674,16 +4673,16 @@ static ld_stats g_ld_stats;
 
 void rsx_live_draw_a010_probe_begin(void)
 {
-    if ((!getenv("YZ_RSX_A010_PROBE") &&
-         !getenv("YZ_RSX_A010_SURFACE_DUMP")) || !g.ready)
+    if ((!getenv("RSX_A010_PROBE") &&
+         !getenv("RSX_A010_SURFACE_DUMP")) || !g.ready)
         return;
     /*
      * Targeted surface readbacks submit and fence the open D3D12 list. When
      * surface capture alone is requested, defer that cost until AUTH confirms
      * that both the character palette and verified camera are synchronized.
-     * Explicit YZ_RSX_A010_PROBE retains its scene-open diagnostic behavior.
+     * Explicit RSX_A010_PROBE retains its scene-open diagnostic behavior.
      */
-    if (!getenv("YZ_RSX_A010_PROBE") &&
+    if (!getenv("RSX_A010_PROBE") &&
         InterlockedCompareExchange(
             &g_yz_a010_reference_camera_active, 0, 0) == 0)
         return;
@@ -5041,7 +5040,7 @@ static void ld_profile_present(u32 frame)
 static int ld_target_trace_enabled(void)
 {
     static int enabled = -1;
-    if (enabled < 0) enabled = getenv("YZ_RSX_TARGET_TRACE") ? 1 : 0;
+    if (enabled < 0) enabled = getenv("RSX_TARGET_TRACE") ? 1 : 0;
     return enabled;
 }
 
@@ -5062,7 +5061,7 @@ static void ld_trace_target(const char* event, u32 target, u32 mask)
  * (rsx_live_draw_present_rgba), do not make the default boot process the
  * guest's otherwise invisible RSX stream.  That experiment materially changes
  * CRI/movie handoff scheduling and regressed the proven title/menu path.
- * YZ_MOVIE_TRACK_RSX keeps the state-tracking experiment available for a
+ * RSX_MOVIE_TRACK keeps the state-tracking experiment available for a
  * focused post-movie A/B once the transition itself is deterministic. */
 static volatile int g_ld_movie_mode = 0;
 static int g_ld_movie_track_rsx = -1;
@@ -5178,7 +5177,7 @@ static void ld_profile_note_rejected_pso(void)
 static int ld_movie_composite_ui_enabled(void)
 {
     if (g_ld_movie_composite_ui < 0)
-        g_ld_movie_composite_ui = getenv("YZ_MOVIE_COMPOSITE_UI") ? 1 : 0;
+        g_ld_movie_composite_ui = getenv("RSX_MOVIE_COMPOSITE_UI") ? 1 : 0;
     return g_ld_movie_composite_ui;
 }
 
@@ -5519,7 +5518,7 @@ static u64 live_decoded_vertex_hash(u64 attr_hash[16])
     return hash;
 }
 
-/* YZ_RSX_DRAW_CSV=path: uncapped per-draw fingerprints for direct comparison
+/* RSX_DRAW_CSV=path: uncapped per-draw fingerprints for direct comparison
  * with the working RPCS3 .rxs replay.  Default-off and renderer-neutral. */
 static void live_draw_csv_emit(u32 prim, u32 n_tri, const char* outcome)
 {
@@ -5531,7 +5530,7 @@ static void live_draw_csv_emit(u32 prim, u32 n_tri, const char* outcome)
     static int inited = 0;
     static FILE* file = NULL;
     static u64 draw = 0;
-    const int a010_only = getenv("YZ_RSX_DRAW_CSV_A010_ONLY") != NULL;
+    const int a010_only = getenv("RSX_DRAW_CSV_A010_ONLY") != NULL;
     if (a010_only) {
         if (InterlockedCompareExchange(
                 &g_yz_a010_root_active, 0, 0) == 0)
@@ -5539,7 +5538,7 @@ static void live_draw_csv_emit(u32 prim, u32 n_tri, const char* outcome)
     }
     if (!inited) {
         inited = 1;
-        const char* path = getenv("YZ_RSX_DRAW_CSV");
+        const char* path = getenv("RSX_DRAW_CSV");
         if (path && path[0]) {
             file = fopen(path, "w");
             if (file) {
@@ -5555,9 +5554,9 @@ static void live_draw_csv_emit(u32 prim, u32 n_tri, const char* outcome)
                     "attr8_hash,attr9_hash,attr10_hash,attr11_hash,"
                     "attr12_hash,attr13_hash,attr14_hash,attr15_hash,"
                     "active_attr_mask,used_attr_mask\n");
-                fprintf(stderr, "[live-diff] YZ_RSX_DRAW_CSV armed: %s\n", path);
+                fprintf(stderr, "[live-diff] RSX_DRAW_CSV armed: %s\n", path);
             } else {
-                fprintf(stderr, "[live-diff] cannot open YZ_RSX_DRAW_CSV: %s\n",
+                fprintf(stderr, "[live-diff] cannot open RSX_DRAW_CSV: %s\n",
                         path);
             }
             fflush(stderr);
@@ -5623,7 +5622,7 @@ static void live_draw_csv_emit(u32 prim, u32 n_tri, const char* outcome)
 #endif
 }
 
-/* YZ_RSX_A010_GEOM: trace one stable orphanage mesh.  This is draw 520 from
+/* RSX_A010_GEOM: trace one stable orphanage mesh.  This is draw 520 from
  * the healthy a010 reference: a 270-vertex triangle strip on the main world
  * surface with PSO 7d9f....  The model-initialization repair now reproduces
  * this exact tuple in the live stream.  Keeping the tuple exact makes the gate
@@ -5635,7 +5634,7 @@ static void live_a010_geom_trace(u32 prim, u32 n_tri)
     static u32 logged = 0;
     static u32 reference_logged = 0;
     if (enabled < 0)
-        enabled = getenv("YZ_RSX_A010_GEOM") ? 1 : 0;
+        enabled = getenv("RSX_A010_GEOM") ? 1 : 0;
     if (prim != PRIM_TRIANGLE_STRIP || n_tri != 270)
         return;
 
@@ -6724,7 +6723,7 @@ static void sink_end_impl(void* user, const rsx_dispatch* r)
      * orphanage draws have already reached internal world targets.  Preserve
      * a few progressively later surface snapshots directly from the draw
      * stream so presentation is not a prerequisite for visual diagnosis. */
-    if (LD_DIAG_ENABLED("YZ_RSX_A010_EAGER_DUMP") &&
+    if (LD_DIAG_ENABLED("RSX_A010_EAGER_DUMP") &&
         InterlockedCompareExchange(&g_ld_a010_world_ready, 0, 0) != 0) {
         static u64 eager_origin = 0;
         static u32 eager_sample = 0;
@@ -7046,7 +7045,7 @@ int rsx_live_draw_init(void* hwnd, u32 width, u32 height,
     g.width = width; g.height = height;
     g.guest_ptr = guest_fn; g.guest_user = guest_user;
     {
-        const char* requested = getenv("YZ_RSX_FP_CONSTANT_MODE");
+        const char* requested = getenv("RSX_FP_CONSTANT_MODE");
         char mode = 'B';
         if (requested && requested[0]) {
             if ((requested[0] == 'L' || requested[0] == 'l') &&
@@ -7061,7 +7060,7 @@ int rsx_live_draw_init(void* hwnd, u32 width, u32 height,
                 fprintf(
                     stderr,
                     "[rsx-fp-constants] unknown "
-                    "YZ_RSX_FP_CONSTANT_MODE='%s'; using buffered\n",
+                    "RSX_FP_CONSTANT_MODE='%s'; using buffered\n",
                     requested);
         }
         g.fp_constant_mode = mode;
@@ -7072,8 +7071,8 @@ int rsx_live_draw_init(void* hwnd, u32 width, u32 height,
             ld_fp_constant_mode_name());
     }
     {
-        const char* requested = getenv("YZ_RSX_VERTEX_MODE");
-        const char* old_path = getenv("YZ_RSX_VERTEX_PATH");
+        const char* requested = getenv("RSX_VERTEX_MODE");
+        const char* old_path = getenv("RSX_VERTEX_PATH");
         char mode = 'C';
         if (requested && requested[0] && !requested[1]) {
             mode = (char)toupper((unsigned char)requested[0]);
@@ -7098,7 +7097,7 @@ int rsx_live_draw_init(void* hwnd, u32 width, u32 height,
             break;
         default:
             fprintf(stderr,
-                    "[rsx-vertex] unknown YZ_RSX_VERTEX_MODE='%s'; "
+                    "[rsx-vertex] unknown RSX_VERTEX_MODE='%s'; "
                     "using C\n",
                     requested ? requested : "");
             mode = 'C';
@@ -7109,7 +7108,7 @@ int rsx_live_draw_init(void* hwnd, u32 width, u32 height,
         }
         g.vertex_mode = mode;
 #if !defined(YZ_PERF_CLEAN)
-        const char* diag_dir = getenv("YZ_RSX_VERTEX_DIAG_DIR");
+        const char* diag_dir = getenv("RSX_VERTEX_DIAG_DIR");
         if (diag_dir && diag_dir[0]) {
             strncpy(
                 g.vertex_diag_dir, diag_dir,
@@ -7356,7 +7355,7 @@ void rsx_live_draw_method(u32 method, u32 arg)
     static int state_trace = -1;
     static u32 state_trace_lines = 0;
     if (state_trace < 0)
-        state_trace = getenv("YZ_RSX_VERTEX_STATE_TRACE") ? 1 : 0;
+        state_trace = getenv("RSX_VERTEX_STATE_TRACE") ? 1 : 0;
     if (state_trace && state_trace_lines < 512) {
         const u32 canonical = method & 0x1FFCu;
         const int vertex_texture =
@@ -7390,7 +7389,7 @@ void rsx_live_draw_method(u32 method, u32 arg)
                 if (g_ld_movie_mode && !composite) {
                     if (g_ld_movie_track_rsx < 0)
                         g_ld_movie_track_rsx =
-                            getenv("YZ_MOVIE_TRACK_RSX") ? 1 : 0;
+                            getenv("RSX_MOVIE_TRACK") ? 1 : 0;
                     if (!g_ld_movie_track_rsx) {
                         ReleaseSRWLockExclusive(&g_ld_access_lock);
                         return;
@@ -7415,7 +7414,7 @@ void rsx_live_draw_method(u32 method, u32 arg)
     if (!g.ready) return;
     if (g_ld_movie_mode) {
         if (g_ld_movie_track_rsx < 0)
-            g_ld_movie_track_rsx = getenv("YZ_MOVIE_TRACK_RSX") ? 1 : 0;
+            g_ld_movie_track_rsx = getenv("RSX_MOVIE_TRACK") ? 1 : 0;
         if (!g_ld_movie_track_rsx) return;
     }
     rsx_dispatch_method(&g.rsx, method, arg);
@@ -7705,7 +7704,7 @@ void rsx_live_draw_present_rgba(const uint8_t* rgba, u32 w, u32 h)
     }
 }
 
-/* Env-gated (YZ_RSX_DUMP) framebuffer dump: read the current color surface back
+/* Env-gated (RSX_DUMP) framebuffer dump: read the current color surface back
  * and write a binary PPM. Self-contained -- creates + releases its own readback
  * buffer, so no init/struct changes. Uses g.list which ld_flush leaves open. */
 /* Readback texel -> 8-bit RGB.  This title renders HDR into FP16 targets, so a
@@ -8258,8 +8257,8 @@ void rsx_live_draw_present(u32 buffer_id)
         static u32 movement_frames;
         static u32 movement_captures;
         if (parity_enabled < 0) {
-            const char* enabled = getenv("YZ_PARITY_DIAG");
-            const char* directory = getenv("YZ_RSX_VALIDATION_DIR");
+            const char* enabled = getenv("RSX_PARITY_DIAG");
+            const char* directory = getenv("RSX_VALIDATION_DIR");
             parity_enabled = enabled && *enabled && directory && *directory;
             if (parity_enabled) {
                 strncpy(parity_dir, directory, sizeof(parity_dir) - 1u);
@@ -8373,13 +8372,13 @@ void rsx_live_draw_present(u32 buffer_id)
     }
     /* Capture the actual presented surface at acknowledged input boundaries.
      * This is independent of desktop visibility/focus and is inert unless the
-     * promotion controller explicitly enables YZ_MOVEMENT_PROOF. */
+     * promotion controller explicitly enables RSX_MOVEMENT_PROOF. */
     {
         static int movement_capture = -1;
         static char movement_dir[MAX_PATH * 2];
         if (movement_capture < 0) {
-            const char* enabled = getenv("YZ_MOVEMENT_PROOF");
-            const char* directory = getenv("YZ_RSX_VALIDATION_DIR");
+            const char* enabled = getenv("RSX_MOVEMENT_PROOF");
+            const char* directory = getenv("RSX_VALIDATION_DIR");
             movement_capture = enabled && directory && *directory;
             if (movement_capture) {
                 strncpy(movement_dir, directory,
@@ -8397,8 +8396,8 @@ void rsx_live_draw_present(u32 buffer_id)
             static int probe_configured;
 
             if (!probe_configured) {
-                const char* delay = getenv("YZ_MOVEMENT_PROOF_DELAY_MS");
-                const char* interval = getenv("YZ_MOVEMENT_PROBE_INTERVAL_MS");
+                const char* delay = getenv("RSX_MOVEMENT_PROOF_DELAY_MS");
+                const char* interval = getenv("RSX_MOVEMENT_PROBE_INTERVAL_MS");
                 probe_delay_ms = delay && *delay
                     ? _strtoui64(delay, NULL, 10) : 780000ull;
                 probe_interval_ms = interval && *interval
@@ -8492,8 +8491,8 @@ void rsx_live_draw_present(u32 buffer_id)
         static u64 validation_origin = UINT64_MAX;
         static char validation_dir[MAX_PATH * 2];
         if (validation_capture < 0) {
-            const char* enabled = getenv("YZ_RSX_VALIDATION_CAPTURE");
-            const char* directory = getenv("YZ_RSX_VALIDATION_DIR");
+            const char* enabled = getenv("RSX_VALIDATION_CAPTURE");
+            const char* directory = getenv("RSX_VALIDATION_DIR");
             validation_capture = enabled && directory && *directory;
             if (validation_capture) {
                 strncpy(validation_dir, directory,
@@ -8917,11 +8916,11 @@ void rsx_live_draw_present(u32 buffer_id)
                   fps_f0, g_ld_frames, (now - fps_t0) / 1000.0);
           fps_t0 = now; fps_f0 = g_ld_frames;
       } }
-    /* YZ_RSX_DUMP_EVERY=N: also dump every Nth frame, not just the first 8 --
+    /* RSX_DUMP_EVERY=N: also dump every Nth frame, not just the first 8 --
      * a title whose content starts after the boot clears is invisible otherwise. */
     static int ld_dump_every = -1;
-    if (ld_dump_every < 0) { const char* e = getenv("YZ_RSX_DUMP_EVERY"); ld_dump_every = e ? atoi(e) : 0; }
-    if (LD_DIAG_ENABLED("YZ_RSX_DUMP") &&
+    if (ld_dump_every < 0) { const char* e = getenv("RSX_DUMP_EVERY"); ld_dump_every = e ? atoi(e) : 0; }
+    if (LD_DIAG_ENABLED("RSX_DUMP") &&
         (g_ld_frames <= 8 || (ld_dump_every > 0 && (g_ld_frames % (u32)ld_dump_every) == 0))) {
         /* Dump the presented color surface (RENDER_TARGET state -> safe). */
         const u32 cur = current_surface();
@@ -8934,9 +8933,9 @@ void rsx_live_draw_present(u32 buffer_id)
 #if !defined(YZ_PERF_CLEAN)
     if (rsx_live_draw_a010_probe_active()) {
         const u32 elapsed = g_ld_frames - g_ld_a010_probe_start_frame;
-        const int targeted = getenv("YZ_RSX_A010_SURFACE_DUMP") != NULL;
+        const int targeted = getenv("RSX_A010_SURFACE_DUMP") != NULL;
         u32 sample_every = 16u;
-        const char *sample_every_env = getenv("YZ_RSX_A010_SURFACE_EVERY");
+        const char *sample_every_env = getenv("RSX_A010_SURFACE_EVERY");
         if (sample_every_env) {
             const int parsed = atoi(sample_every_env);
             if (parsed > 0 && parsed <= 64)
@@ -8952,9 +8951,9 @@ void rsx_live_draw_present(u32 buffer_id)
          * while it is still assembling the first a010 world command chain;
          * begin targeted capture only after a real scene mesh was observed. */
         const int capture_once =
-            targeted && getenv("YZ_RSX_A010_CAPTURE_ONCE") != NULL;
+            targeted && getenv("RSX_A010_CAPTURE_ONCE") != NULL;
         const int explicit_probe_fallback =
-            capture_once && getenv("YZ_RSX_A010_PROBE") != NULL &&
+            capture_once && getenv("RSX_A010_PROBE") != NULL &&
             elapsed >= 192u;
         /* The exact healthy-mesh tuple is the strongest capture gate, but a
          * broken natural scene may never produce it. An explicitly requested

@@ -178,7 +178,7 @@ static void* ppu_host_thread_proc(void* param)
 }
 
 /* ---------------------------------------------------------------------------
-/* YDKJ_THREADGATE: PS3 priority scheduling — a newly created same/lower-priority
+/* PPU_THREADGATE: PS3 priority scheduling — a newly created same/lower-priority
  * thread does NOT run until the creating thread blocks. Our HLE spawns host threads
  * immediately, so a worker (GThread entry=0x5353C0) can read its job object's
  * [arg+0x10] owner link BEFORE the main thread finishes linking it -> null -> spin.
@@ -402,7 +402,7 @@ int64_t sys_ppu_thread_create(ppu_context* ctx)
      * this=[arg+0x8], vtable=[arg+0xC], method=[vtable+0]. If this(+0x8) is null
      * the worker dispatches its job on a null object -> construction never runs. */
     { extern uint8_t* vm_base; uint32_t a=(uint32_t)arg;
-      if(a && a<0x50000000u && getenv("YDKJ_THREADARG")){
+      if(a && a<0x50000000u && getenv("PPU_THREADARG")){
         #define RB(o) (((uint32_t)vm_base[(a+(o))&0x0FFFFFFFu]<<24)|((uint32_t)vm_base[(a+(o)+1)&0x0FFFFFFFu]<<16)|((uint32_t)vm_base[(a+(o)+2)&0x0FFFFFFFu]<<8)|vm_base[(a+(o)+3)&0x0FFFFFFFu])
         uint32_t self=RB(0x0), thisp=RB(0x8), vtbl=RB(0xC);
         fprintf(stderr,"[THREADARG] arg=0x%08X [+0]=0x%08X this[+8]=0x%08X vtbl[+C]=0x%08X\n", a, self, thisp, vtbl);
@@ -427,7 +427,7 @@ int64_t sys_ppu_thread_create(ppu_context* ctx)
      * the host stack and overflow the 1 MB default. Reserve 256 MB (committed
      * lazily by the OS via STACK_SIZE_PARAM_IS_A_RESERVATION). */
 #ifdef _WIN32
-    if (g_gate_on < 0) g_gate_on = getenv("YDKJ_THREADGATE") ? 1 : 0;
+    if (g_gate_on < 0) g_gate_on = getenv("PPU_THREADGATE") ? 1 : 0;
     /* Gate only guest worker threads (game .text entry), never libsre/system threads. */
     unsigned _initflag = STACK_SIZE_PARAM_IS_A_RESERVATION;
     int _gate_this = (g_gate_on > 0 && entry >= 0x10000 && entry < 0x10000000);

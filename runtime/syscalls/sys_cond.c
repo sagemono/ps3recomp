@@ -191,7 +191,7 @@ int64_t sys_cond_wait(ppu_context* ctx)
                           (unsigned long)pk, vm_read32((uint32_t)pk), vm_read32((uint32_t)pk), cond_id); }
     fprintf(stderr, "[WAIT] cond_wait(cond=%u timeout=%llu) tid=%llu lr=0x%08X\n", cond_id, (unsigned long long)timeout_us,
             (unsigned long long)ctx->thread_id, (uint32_t)ctx->lr);
-    /* YDKJ_THREADGATE: creating thread is blocking -> let gated workers run. */
+    /* PPU_THREADGATE: creating thread is blocking -> let gated workers run. */
     { extern void ydkj_release_pending_threads(void); ydkj_release_pending_threads(); }
 #ifdef _WIN32
     if (cond_id == 7) {

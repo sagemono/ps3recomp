@@ -570,7 +570,7 @@ static int64_t sys_spu_thread_initialize_handler(ppu_context* ctx)
             spu_register_ppu_fallback(YDKJ_SPURS_KERNEL_ENTRY, ydkj_hle_spurs_kernel, 0); }
     }
 
-    if (getenv("YDKJ_SPUIMG") && img_ea && thread_num == 0) {
+    if (getenv("SPU_IMG_DUMP") && img_ea && thread_num == 0) {
         uint32_t type  = vm_read_be32(img_ea + 0);
         uint32_t entry = vm_read_be32(img_ea + 4);
         uint32_t segs  = vm_read_be32(img_ea + 8);
@@ -696,7 +696,7 @@ static int32_t spu_interp_fallback(uint32_t tid, uint32_t args_ea,
     uint8_t* ls = spu_thread_get_or_alloc_ls(t);
     if (!ls) return -1;
     uint32_t entry = spu_load_image_to_ls(t->img_ea, ls);
-    if (getenv("RD_SPU_ARGS") && vm_base && args_ea) {
+    if (getenv("SPU_ARGS_DUMP") && vm_base && args_ea) {
         fprintf(stderr, "[SPU-ARGS] tid=0x%X args@0x%08X:", tid, args_ea);
         for (int i = 0; i < 8; i++) fprintf(stderr, " %08X", vm_read_be32(args_ea + i*4));
         fprintf(stderr, "\n");
@@ -752,11 +752,11 @@ int spu_dispatch_frame_by_queue(uint32_t comp_queue, uint32_t work_ea)
          * a million PUTs into the zero page, no progress, and the fluid's vertex
          * buffer left untouched. Seeding only a real descriptor keeps the
          * completion handshake intact and gives the workers their input. */
-        /* RD_WORKDUMP=1: the work descriptor the PPU hands the worker. Its
+        /* SPU_WORKDESC_DUMP=1: the work descriptor the PPU hands the worker. Its
          * pointers are where the job DMAs from and to, so a job that writes
          * only scratch is either reading the wrong descriptor or the descriptor
          * does not name the buffer we expect. */
-        { static int _wd = -1; if (_wd < 0) _wd = getenv("RD_WORKDUMP") ? 1 : 0;
+        { static int _wd = -1; if (_wd < 0) _wd = getenv("SPU_WORKDESC_DUMP") ? 1 : 0;
           if (_wd && work_ea > 0x1000000u && vm_base) { static int _n = 0; if (_n++ < 3) {
               fprintf(stderr, "[WORKDESC] tid=0x%X ea=0x%08X:%c", t->tid, work_ea, 10);
               for (int r = 0; r < 16; r++) {
@@ -765,13 +765,13 @@ int spu_dispatch_frame_by_queue(uint32_t comp_queue, uint32_t work_ea)
                       fprintf(stderr, " %08X", vm_read_be32(work_ea + r*16 + c*4));
                   fprintf(stderr, "%c", 10);
               } } } }
-        { static int _wh = -1; if (_wh < 0) _wh = getenv("RD_WORKHDR") ? 1 : 0;
+        { static int _wh = -1; if (_wh < 0) _wh = getenv("SPU_WORKDESC_HDR") ? 1 : 0;
           if (_wh && work_ea > 0x1000000u && vm_base) { static int _n = 0; if (_n++ < 40)
               fprintf(stderr, "[WORKHDR] tid=0x%X ea=0x%08X w0=%u w1=%u f2=%g f3=%g%c",
                       t->tid, work_ea, vm_read_be32(work_ea), vm_read_be32(work_ea+4),
                       (double)*(const float*)&(const uint32_t){0}, 0.0, 10); }
           if (_wh && work_ea > 0x1000000u && vm_base) { } }
-        { static int _sd = -1; if (_sd < 0) _sd = getenv("RD_SEEDDBG") ? 1 : 0;
+        { static int _sd = -1; if (_sd < 0) _sd = getenv("SPU_SEED_DBG") ? 1 : 0;
           if (_sd) { static int _n = 0; if (_n++ < 12)
               fprintf(stderr, "[SPU-SEED] tid=0x%X entry=0x%05X args=0x%08X seed=0x%08X%c",
                       t->tid, entry, t->args_ea, work_ea, 10); } }
@@ -938,8 +938,8 @@ static int64_t sys_spu_thread_group_start_handler(ppu_context* ctx)
             ResetEvent(t->finish_event);
         /* Lifted SPU loops can become deep C tail-call recursion; give SPU host
          * threads a large stack (reserved). Bumped to 512 MB to diagnose whether
-         * the cri/taskset-policy dispatch chain overflows (env YDKJ_BIGSTACK). */
-        SIZE_T _stk = getenv("YDKJ_BIGSTACK") ? (SIZE_T)512 * 1024 * 1024
+         * the cri/taskset-policy dispatch chain overflows (env SPU_HOST_STACK_BIG). */
+        SIZE_T _stk = getenv("SPU_HOST_STACK_BIG") ? (SIZE_T)512 * 1024 * 1024
                                               : (SIZE_T)16 * 1024 * 1024;
         t->host_thread = CreateThread(NULL, _stk,
                                       spu_fallback_thread_proc, t,
@@ -1682,10 +1682,10 @@ static int64_t sys_spu_image_import_handler(ppu_context* ctx)
 
     fprintf(stderr, "[SPU] image_import img=0x%08X src=0x%08X -> entry=0x%05X nsegs=%d\n",
             img_ea, src_ea, entry, nsegs);
-    /* LBP_DUMP_IMPORT=<dir>: save each unique imported ELF (FMOD's runtime-
+    /* SPU_DUMP_IMPORT=<dir>: save each unique imported ELF (FMOD's runtime-
      * materialized SPU overlay plugins) so they can be lifted + registered.
      * Extent = max(p_off+p_fsz) over PT_LOADs, re-walked here cheaply. */
-    { const char* dd = getenv("LBP_DUMP_IMPORT");
+    { const char* dd = getenv("SPU_DUMP_IMPORT");
       if (dd && *dd) {
           static uint32_t s_seen[16]; static int s_nseen = 0;
           int dup = 0;

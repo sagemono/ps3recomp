@@ -342,7 +342,7 @@ uint32_t spu_interp_run(spu_context* ctx, uint32_t start_lsa) {
     /* YDKJ_SPU_TRACE=N: log the last N PCs into a ring buffer and dump them when the
      * interp halts -- shows the path to a branch-to-0 (the cri task/policy wall). */
     static int _tr=-1; if(_tr<0){const char*e=getenv("YDKJ_SPU_TRACE");_tr=e?atoi(e):0;}
-    static uint64_t _cap=0; { static int _ci=0; if(!_ci){_ci=1; const char*e=getenv("YDKJ_SPU_STEPCAP"); _cap=e?strtoull(e,0,0):0;} }
+    static uint64_t _cap=0; { static int _ci=0; if(!_ci){_ci=1; const char*e=getenv("SPU_STEPCAP"); _cap=e?strtoull(e,0,0):0;} }
     /* YDKJ_CRI_GATE1TRACE=N: cri decode task busy-spins in the validator func_00026E80
      * (LS 0x26E80..0x26F14), a straight-line leaf that returns r3 = 0 / 0x8041090F /
      * 0x80410909. Hand-decoding its selb/fsm/gb/ceqh lanes proved unreliable, so log the
@@ -395,7 +395,7 @@ uint32_t spu_interp_run(spu_context* ctx, uint32_t start_lsa) {
         }
         if (_tr>0) { ring[rc&63]=ctx->pc; rc++; if(rn<64)rn++; }
         steps++;
-        /* YDKJ_SPU_STEPCAP=N: a task that never halts (infinite work/wait loop) never
+        /* SPU_STEPCAP=N: a task that never halts (infinite work/wait loop) never
          * dumps its ring. Force a one-shot dump after N steps to see where it loops. */
         if (_tr>0 && _cap && steps == _cap) {
             fprintf(stderr,"[spu-trace] STEPCAP pc=0x%05X after %llu steps; last %d PCs:",

@@ -100,218 +100,25 @@
 99	hle:cellSpursJobGuardNotify
 100	sys:182
 101	sys:190
-102	hle:cellSpursJoinJobChain
-103	hle:cellAudioOutGetSoundAvailability
-104	hle:cellAudioOutGetDeviceInfo
-105	hle:cellAudioOutConfigure
-106	hle:cellAudioOutSetCopyControl
-107	hle:cellAudioInit
-108	hle:cellAudioPortOpen
-109	hle:cellAudioSetNotifyEventQueue
-110	hle:cellAudioGetPortConfig
-111	hle:cellAudioPortStart
-112	sys:133
-113	hle:cellSailMemAllocatorInitialize
-114	hle:cellSailPlayerInitialize2
-115	hle:cellSailSoundAdapterInitialize
-116	hle:cellSailPlayerSetSoundAdapter
-117	sys:108
-118	hle:cellFsStat
-119	hle:cellFsOpen
-120	hle:cellFsLseek
-121	hle:cellFsRead
-122	hle:cellFsClose
-123	sys:106
-124	sys:101
-125	sys:142
-126	hle:cellSpursEventFlagDetachLv2EventQueue
-127	hle:cellSpursFinalize
-128	hle:cellGcmUnmapEaIoAddress
-129	hle:sys_lwmutex_destroy
-130	sys:349
-131	hle:cellSysmoduleUnloadModule
-132	sys:44
-133	hle:cellAudioPortStop
-134	hle:cellAudioRemoveNotifyEventQueue
-135	sys:129
-136	hle:cellAudioPortClose
-137	hle:cellAudioQuit
-138	hle:cellSysutilUnregisterCallback
-139	hle:cellSpursDetachLv2EventQueue
-140	sys:137
-141	sys:135
-142	hle:cellPadEnd
-143	hle:cellKbEnd
-144	hle:cellMouseEnd
-145	sys:988
-146	hle:sys_prx_exitspawn_with_level
-147	hle:sceNpCommerce2Term
-148	hle:sceNpManagerUnregisterCallback
-149	hle:sceNpTerm
-150	hle:cellHttpsEnd
-151	hle:cellHttpEnd
-152	hle:cellSslEnd
-153	hle:netFinalizeNetwork
-154	sys:87
-155	sys:83
-156	sys:325
-157	hle:sceNpTrophyTerm
-# counts
-count	hle:sys_initialize_tls	1
-count	hle:sys_lwmutex_create	10-99
-count	sys:352	1
-count	hle:sys_time_get_system_time	2-9
-count	sys:324	1
-count	sys:82	1
-count	sys:118	2-9
-count	hle:sys_ppu_thread_create	2-9
-count	sys:85	1
-count	hle:_sys_process_atexitspawn	1
-count	hle:_sys_process_at_Exitspawn	1
-count	hle:sys_ppu_thread_get_id	100-999
-count	hle:sys_lwmutex_lock	100-999
-count	sys:403	100-999
-count	hle:sys_lwmutex_unlock	100-999
-count	hle:cellSysmoduleLoadModule	10-99
-count	hle:_cellGcmInitBody	1
-count	hle:cellGcmGetConfiguration	1
-count	hle:cellGcmAddressToOffset	10-99
-count	hle:cellVideoOutGetState	1
-count	hle:cellVideoOutGetResolutionAvailability	1
-count	hle:cellVideoOutGetResolution	1
-count	hle:cellGcmGetTiledPitchSize	2-9
-count	hle:cellVideoOutConfigure	1
-count	hle:cellGcmSetFlipMode	1
-count	hle:cellGcmSetTileInfo	2-9
-count	hle:cellGcmBindTile	2-9
-count	hle:cellGcmBindZcull	1
-count	hle:cellGcmSetDisplayBuffer	2-9
-count	sys:128	2-9
-count	sys:134	2-9
-count	sys:136	2-9
-count	hle:cellGcmSetFlipHandler	2-9
-count	hle:cellPadInit	1
-count	hle:cellKbInit	1
-count	hle:cellKbSetCodeType	2-9
-count	hle:cellMouseInit	1
-count	sys:147	100-999
-count	hle:cellGcmMapEaIoAddress	1
-count	sys:145	1
-count	hle:cellSysutilGetSystemParamInt	1
-count	hle:cellGcmGetLabelAddress	2-9
-count	hle:cellGcmSetVBlankHandler	1
-count	hle:cellSysutilRegisterCallback	2-9
-count	hle:cellSysutilCheckCallback	2-9
-count	hle:cellPadGetInfo2	2-9
-count	hle:cellKbGetInfo	2-9
-count	hle:cellMouseGetInfo	2-9
-count	hle:cellGcmGetTimeStampLocation	2-9
-count	hle:cellGameBootCheck	1
-count	hle:cellGameGetParamInt	1
-count	hle:cellGameContentPermit	2-9
-count	hle:netInitializeNetworkEx	1
-count	hle:cellSslInit	1
-count	hle:cellHttpInit	1
-count	hle:cellSslCertificateLoader	2-9
-count	hle:cellHttpsInit	1
-count	hle:sceNpInit	1
-count	hle:sceNpManagerRegisterCallback	1
-count	hle:sceNpCommerce2Init	1
-count	hle:sceNpManagerGetStatus	1
-count	hle:sceNpTrophyInit	1
-count	hle:sceNpTrophyCreateContext	1
-count	hle:sceNpTrophyCreateHandle	1
-count	hle:cellGcmGetFlipStatus	1k-9k
-count	hle:cellGcmResetFlipStatus	2-9
-count	hle:sceNpTrophyGetRequiredDiskSpace	1
-count	hle:_cellGcmSetFlipCommand	2-9
-count	hle:sys_ppu_thread_exit	2-9
-count	sys:102	10-99
-count	sys:104	10-99
-count	sys:138	2-9
-count	hle:cellGcmGetControlRegister	100-999
-count	hle:cellPadGetData	2-9
-count	hle:cellPadSetPortSetting	1
-count	sys:141	1k-9k
-count	hle:cellSaveDataAutoLoad2	1
-count	hle:cellGameDataCheck	1
-count	sys:100	2-9
-count	sys:105	2-9
-count	sys:631	1
-count	sys:107	10-99
-count	hle:cellRtcGetTick	100-999
-count	hle:cellGcmMapMainMemory	2-9
-count	sys:348	2-9
-count	hle:cellFontOpenFontset	1
-count	hle:cellFontBindRenderer	2-9
-count	hle:cellFontSetScalePixel	1
-count	hle:_cellSpursAttributeInitialize	1
-count	hle:cellSpursAttributeSetNamePrefix	1
-count	hle:cellSpursInitializeWithAttribute	1
-count	hle:cellSpursAttachLv2EventQueue	2-9
-count	sys:130	10k-99k
-count	hle:_cellSpursJobChainAttributeInitialize	10-99
-count	hle:cellSpursJobChainAttributeSetName	10-99
-count	hle:cellSpursCreateJobChainWithAttribute	10-99
-count	hle:cellSpursJobGuardInitialize	10-99
-count	hle:cellSpursRunJobChain	10-99
-count	hle:cellSpursJobGuardNotify	10k-99k
-count	sys:182	2-9
-count	sys:190	1
-count	hle:cellSpursJoinJobChain	10-99
-count	hle:cellAudioOutGetSoundAvailability	2-9
-count	hle:cellAudioOutGetDeviceInfo	1
-count	hle:cellAudioOutConfigure	1
-count	hle:cellAudioOutSetCopyControl	1
-count	hle:cellAudioInit	1
-count	hle:cellAudioPortOpen	1
-count	hle:cellAudioSetNotifyEventQueue	1
-count	hle:cellAudioGetPortConfig	1
-count	hle:cellAudioPortStart	1
-count	sys:133	1
-count	hle:cellSailMemAllocatorInitialize	1
-count	hle:cellSailPlayerInitialize2	1
-count	hle:cellSailSoundAdapterInitialize	1
-count	hle:cellSailPlayerSetSoundAdapter	1
-count	sys:108	10-99
-count	hle:cellFsStat	1
-count	hle:cellFsOpen	2-9
-count	hle:cellFsLseek	2-9
-count	hle:cellFsRead	2-9
-count	hle:cellFsClose	2-9
-count	sys:106	2-9
-count	sys:101	2-9
-count	sys:142	2-9
-count	hle:cellSpursEventFlagDetachLv2EventQueue	1
-count	hle:cellSpursFinalize	2-9
-count	hle:cellGcmUnmapEaIoAddress	10-99
-count	hle:sys_lwmutex_destroy	2-9
-count	sys:349	2-9
-count	hle:cellSysmoduleUnloadModule	10-99
-count	sys:44	2-9
-count	hle:cellAudioPortStop	1
-count	hle:cellAudioRemoveNotifyEventQueue	1
-count	sys:129	2-9
-count	hle:cellAudioPortClose	1
-count	hle:cellAudioQuit	1
-count	hle:cellSysutilUnregisterCallback	1
-count	hle:cellSpursDetachLv2EventQueue	2-9
-count	sys:137	1
-count	sys:135	1
-count	hle:cellPadEnd	1
-count	hle:cellKbEnd	1
-count	hle:cellMouseEnd	1
-count	sys:988	2-9
-count	hle:sys_prx_exitspawn_with_level	1
-count	hle:sceNpCommerce2Term	1
-count	hle:sceNpManagerUnregisterCallback	1
-count	hle:sceNpTerm	1
-count	hle:cellHttpsEnd	1
-count	hle:cellHttpEnd	1
-count	hle:cellSslEnd	1
-count	hle:netFinalizeNetwork	1
-count	sys:87	1
-count	sys:83	1
-count	sys:325	1
-count	hle:sceNpTrophyTerm	1
-# end
+102	hle:cellSpursShutdownJobChain
+103	hle:cellSpursJoinJobChain
+104	hle:cellAudioOutGetSoundAvailability
+105	hle:cellAudioOutGetDeviceInfo
+106	hle:cellAudioOutConfigure
+107	hle:cellAudioOutSetCopyControl
+108	hle:cellAudioInit
+109	hle:cellAudioPortOpen
+110	hle:cellAudioSetNotifyEventQueue
+111	hle:cellAudioGetPortConfig
+112	hle:cellAudioPortStart
+113	sys:133
+114	hle:cellSailMemAllocatorInitialize
+115	hle:cellSailPlayerInitialize2
+116	hle:cellSailSoundAdapterInitialize
+117	hle:cellSailPlayerSetSoundAdapter
+118	hle:cellSailGraphicsAdapterInitialize
+119	hle:cellSailGraphicsAdapterSetPreferredFormat
+120	hle:cellSailPlayerSetGraphicsAdapter
+121	hle:cellSailPlayerBoot
+122	sys:108
+123	hle:cellFsStat

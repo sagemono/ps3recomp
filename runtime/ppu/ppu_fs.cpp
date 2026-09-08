@@ -240,7 +240,7 @@ static void cellFsOpen(ppu_context* ctx)
             if (want && *want && strstr(gpath, want)) ydkj_host_bt("fs-open");
           } }
       else fprintf(stderr, "[fs] open '%s' -> fd %d\n", gpath, fd); }
-    if (getenv("YDKJ_USMBT") && strstr(gpath, ".usm")) {
+    if (getenv("PS3_FSLOG_BT") && strstr(gpath, ".usm")) {
         /* Resolve to GUEST functions (raw host RVAs are useless here): this tells us
          * which criMv/criFs function opened the movie, so the reader-attach path
          * (stream+0x10, never wired => movie opened but never read) can be found. */
@@ -332,7 +332,7 @@ static void cellFsClose(ppu_context* ctx)
     if (getenv("FS_CALLER")) { char w[64]="?"; ppu_guest_caller(w,sizeof w);
         fprintf(stderr, "[fs] close fd=%d  (by %s)\n", fd, w); }
     if (fd >= 0 && fd < FS_MAX && g_files[fd]) {
-        if (g_fd_usm[fd] && getenv("YDKJ_USMRD")) fprintf(stderr, "[USMRD] CLOSE usm fd=%d\n", fd);
+        if (g_fd_usm[fd] && getenv("PS3_FSLOG_READS")) fprintf(stderr, "[USMRD] CLOSE usm fd=%d\n", fd);
         fclose(g_files[fd]); g_files[fd] = nullptr; g_fd_usm[fd] = 0;
     }
     ctx->gpr[3] = CELL_OK;
@@ -372,26 +372,26 @@ static void cellFsRead(ppu_context* ctx)
     if (ppu_vm_size && (uint64_t)buf + nbytes > ppu_vm_size) nbytes = ppu_vm_size - buf;
     fs_prefault(buf, nbytes);
     size_t n = fread(vm_base + buf, 1, (size_t)nbytes, g_files[fd]);   /* raw bytes, no swap */
-    /* TM_FSEOF=<fd>,<bytes>: report end-of-file past <bytes> on one descriptor.
+    /* PS3_FSLOG_EOF=<fd>,<bytes>: report end-of-file past <bytes> on one descriptor.
      * The intro cinematic is 28 seconds and this port renders it at a few frames
      * a second, so it cannot be watched to its end -- truncating the stream makes
      * the demuxer see EOF and the movie finish, which is what advances the title
      * to whatever follows the intro. Deliberately a testing knob, not a fix. */
     { static int efd = -2; static long elim = 0;
-      if (efd == -2) { const char* e = getenv("TM_FSEOF");
+      if (efd == -2) { const char* e = getenv("PS3_FSLOG_EOF");
           if (e) { efd = atoi(e); const char* c = strchr(e, 44); elim = c ? atol(c + 1) : 0; }
           else efd = -1; }
       if (efd >= 0 && fd == efd && elim > 0 && fpos_before >= elim) {
           static int once = 0;
-          if (!once++) fprintf(stderr, "[fs] TM_FSEOF: fd=%d truncated at %ld bytes\n", fd, elim);
+          if (!once++) fprintf(stderr, "[fs] PS3_FSLOG_EOF: fd=%d truncated at %ld bytes\n", fd, elim);
           n = 0;
       } }
-    if (g_fd_usm[fd] && getenv("YDKJ_USMRD")) fprintf(stderr, "[USMRD] READ usm fd=%d nbytes=%llu -> %zu magic=%02X%02X%02X%02X pos=%ld lr=0x%08X\n", fd, (unsigned long long)nbytes, n, vm_base[buf], vm_base[buf+1], vm_base[buf+2], vm_base[buf+3], fpos_before, (uint32_t)ctx->lr);
-    /* TM_FSREADS=<fd>: log every read on one descriptor. PS3_FSLOG caps at 20
+    if (g_fd_usm[fd] && getenv("PS3_FSLOG_READS")) fprintf(stderr, "[USMRD] READ usm fd=%d nbytes=%llu -> %zu magic=%02X%02X%02X%02X pos=%ld lr=0x%08X\n", fd, (unsigned long long)nbytes, n, vm_base[buf], vm_base[buf+1], vm_base[buf+2], vm_base[buf+3], fpos_before, (uint32_t)ctx->lr);
+    /* PS3_FSLOG_READS=<fd>: log every read on one descriptor. PS3_FSLOG caps at 20
      * lines and they are all spent before a movie ever opens, so it cannot
      * answer "is the streamer reading the .avi". */
     { static int wfd = -2;
-      if (wfd == -2) { const char* e = getenv("TM_FSREADS"); wfd = e ? atoi(e) : -1; }
+      if (wfd == -2) { const char* e = getenv("PS3_FSLOG_READS"); wfd = e ? atoi(e) : -1; }
       if (wfd >= 0 && fd == wfd)
           fprintf(stderr, "[fsread] fd=%d want=%llu got=%zu pos=%ld\n",
                   fd, (unsigned long long)nbytes, n, fpos_before); }
@@ -418,7 +418,7 @@ static void cellFsRead(ppu_context* ctx)
       if ((_n % 2000)==0) { fprintf(stderr,"[fs] read summary after %d reads:",_n);
           for (int i=0;i<64;i++) if (cnt_fd[i]) fprintf(stderr," fd%d=%ux/%lluB",i,cnt_fd[i],(unsigned long long)per_fd[i]);
           fprintf(stderr,"\n"); } }
-    if (getenv("YDKJ_TOCTRACE") && nbytes >= 50000) {  /* data.toc read -> who parses it? */
+    if (getenv("PS3_FSLOG_TOC") && nbytes >= 50000) {  /* data.toc read -> who parses it? */
         fprintf(stderr, "[TOC] data.toc read into buf=0x%08X n=%zu; lr=0x%08llX; guest-stack RAs:\n", buf, n, (unsigned long long)ctx->lr);
         uint32_t sp = (uint32_t)ctx->gpr[1];
         for (uint32_t i = 0; i < 128 && sp + i*4 + 4 <= ppu_vm_size; i++) {
@@ -439,9 +439,9 @@ static void cellFsWrite(ppu_context* ctx)
     if (fd < 0 || fd >= FS_MAX || !g_files[fd]) { ctx->gpr[3] = (uint64_t)(int64_t)CELL_FS_EIO; return; }
     fs_prefault(buf, nbytes);   /* kernel READS the buffer; same reserved-page trap */
     size_t n = fwrite(vm_base + buf, 1, (size_t)nbytes, g_files[fd]);
-    /* DIAGNOSTIC (FLOW_CFGBT=1): dump the guest back-chain when the game logs the
+    /* DIAGNOSTIC (PS3_FSLOG_BT=1): dump the guest back-chain when the game logs the
      * render-config failure, to locate setScreenRenderTargetInternal & the config obj. */
-    if (getenv("FLOW_CFGBT") && buf && nbytes > 0 && nbytes < 4096 && vm_base) {
+    if (getenv("PS3_FSLOG_BT") && buf && nbytes > 0 && nbytes < 4096 && vm_base) {
         char tmp[256]; uint32_t nn = (uint32_t)(nbytes < 255 ? nbytes : 255);
         memcpy(tmp, vm_base + buf, nn); tmp[nn] = 0;
         if (strstr(tmp,"config") || strstr(tmp,"Config") || strstr(tmp,"Mystery") ||

@@ -860,7 +860,7 @@ s32 cellSpursCreateTask(CellSpursTaskset* taskset, CellSpursTaskId* taskId,
              * pointer that reads back 0 (the task GETs from EA 0 -> some field of
              * its work descriptor is null in our run). Each of the 4 arg words that
              * looks like a valid guest EA gets 64 bytes dumped as BE u32s. */
-            if (getenv("LBP_TASKSET_TRACE")) {
+            if (getenv("SPURS_TASKSET_TRACE")) {
                 for (int a = 0; a < 4; a++) {
                     uint32_t p = task_arg[a];
                     if (p < 0x10000 || p >= 0x50000000u) continue;   /* not a plausible EA */
@@ -1260,12 +1260,12 @@ s32 cellSpursAddWorkloadWithAttribute(CellSpurs* spurs,
             }
             printf("\n");
         }
-        /* PM-COMPLETENESS PROBE (LBP_PM_DUMP): the wwsjob job-manager PM is
+        /* PM-COMPLETENESS PROBE (SPURS_PM_DUMP): the wwsjob job-manager PM is
          * ASSEMBLED at runtime -- the embedded ELF (LS 0xA00) has zero HOLES at
          * LS 0xAEE..0x11B0 and the executeStage lives at LS 0x14f4, both filled
          * by SPURS setup. Report whether OUR runtime's PM has that code or the
          * holes, and (once) write the whole image out so we can re-lift it. */
-        if (getenv("LBP_PM_DUMP") && pm_ea && pm_sz >= 0x2200 && pm_sz <= 0x4000) {
+        if (getenv("SPURS_PM_DUMP") && pm_ea && pm_sz >= 0x2200 && pm_sz <= 0x4000) {
             u32 exe = vm_read32(pm_ea + 0xAF4);          /* LS 0x14f4 executeStage */
             int zeros = 0; for (u32 o = 0xEE; o < 0x7B0; o += 4)
                 if (vm_read32(pm_ea + o) == 0) zeros += 4;
@@ -2463,12 +2463,12 @@ static void jc_execute(u32 entry_ea, u32 jc_ea, u32 size_desc)
 static DWORD WINAPI jc_thread(LPVOID p)
 {
     int slot = (int)(intptr_t)p;
-    /* TIMING PROBE (LBP_JC_DELAY=ms): the real jm2 chain walker is async and
+    /* TIMING PROBE (SPURS_JC_DELAY=ms): the real jm2 chain walker is async and
      * picks up jobs as the PPU appends them + fills their descriptors. Our walk
      * is one-shot; if it reads descriptors before the PPU populates the I/O
      * (n_dma=0, empty ioBuffer), deferring the walk should let real I/O appear.
      * Confirms timing-vs-never before committing to the async rewrite. */
-    { const char* d = getenv("LBP_JC_DELAY");
+    { const char* d = getenv("SPURS_JC_DELAY");
       if (d && *d) Sleep((unsigned)atoi(d)); }
     jc_execute(s_jobchains[slot].entry_ea, s_jobchains[slot].jc_ea,
                s_jobchains[slot].size_desc);

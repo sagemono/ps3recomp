@@ -568,7 +568,7 @@ Two crashes, same root cause, both reachable from ordinary gameplay:
 
 **Diagnostics**
 
-- **`LBP_WV`** watches PPU stores by value rather than by address (#108), the
+- **`PPU_WVAL`** watches PPU stores by value rather than by address (#108), the
   write watch **says when it stops printing** and lets the cap be raised (#111),
   the guard **prints the writer's live arguments** on every watched-line hit
   (#99), plus `PS3_HLE_ARGS`, `PS3_WAIT_OBJ` and a settable SPU atomic-trace cap.

@@ -302,10 +302,10 @@ static inline int mfc_do_transfer(spu_context* spu, uint32_t lsa, uint64_t ea,
                           i, buckets[i], 10);
           }
       } }
-    /* LBP_MFC_TRACE: attribute silent DMA-poll loops (a wedged task whose
+    /* SPU_MFC_TRACE: attribute silent DMA-poll loops (a wedged task whose
      * host thread samples "in ntdll" because VirtualQuery dominates). Prints
      * every 64k-th transfer per thread: enough to see the loop's pc/ea. */
-    { static int s_t = -1; if (s_t < 0) { const char* e = getenv("LBP_MFC_TRACE");
+    { static int s_t = -1; if (s_t < 0) { const char* e = getenv("SPU_MFC_TRACE");
         s_t = e ? atoi(e) : 0; if (e && !s_t) s_t = 1; }
       if (s_t) { static _Thread_local unsigned long long _n; ++_n;
         /* level 2+: also print each thread's first 192 transfers (setup DMAs
@@ -351,7 +351,7 @@ static inline int mfc_do_transfer(spu_context* spu, uint32_t lsa, uint64_t ea,
         } } }
     /* cellAudio port-ring window: log every guest write into it (rare, load-
      * bearing -- the audio OUTPUT path). Same env gate as the sampler. */
-    { static int s_pr = -1; if (s_pr < 0) s_pr = getenv("LBP_MFC_TRACE") ? 1 : 0;
+    { static int s_pr = -1; if (s_pr < 0) s_pr = getenv("SPU_MFC_TRACE") ? 1 : 0;
       if (s_pr && (cmd & 0x20) && !(cmd & 0x40) &&
           (((uint32_t)ea >= 0x01000000u && (uint32_t)ea < 0x01800000u) ||
            ((uint32_t)ea >= 0x00927D00u && (uint32_t)ea < 0x00928000u))) {
@@ -532,7 +532,7 @@ static inline int mfc_do_transfer(spu_context* spu, uint32_t lsa, uint64_t ea,
          * (32B from ~0x94Fxxx) then a large GET from a NULL source = the
          * overlay never loads. Dump the descriptor content to see where the
          * real source EA was dropped. */
-        { static int s_ovl = -1; if (s_ovl < 0) s_ovl = getenv("LBP_OVL_DIAG") ? 1 : 0;
+        { static int s_ovl = -1; if (s_ovl < 0) s_ovl = getenv("SPU_OVL_DIAG") ? 1 : 0;
           if (s_ovl) {
               /* overlay-load map: image-6 GET of a code-sized chunk into the
                * high LS overlay region, with its (now-correct) plugin source.
@@ -589,7 +589,7 @@ static inline int mfc_do_transfer(spu_context* spu, uint32_t lsa, uint64_t ea,
          * functions resident for this context. */
         { extern void spu_overlay_note_get(spu_context*, uint32_t, const uint8_t*, uint32_t);
           spu_overlay_note_get(spu, (uint32_t)ea, (const uint8_t*)ls_ptr, size); }
-        /* LBP_SPU_WATCH: a DMA GET landing on a watched LS line is how the PPU
+        /* SPU_LS_WATCH: a DMA GET landing on a watched LS line is how the PPU
          * delivers commands into the SPU's queue (bypasses spu_ls_write128). */
         { int _n; unsigned* _w = spu_ls_watch_list(&_n);
           for (int _i = 0; _i < _n; _i++) {
@@ -1188,9 +1188,9 @@ static inline int mfc_submit(mfc_engine* mfc, spu_context* spu, uint32_t cmd)
      * movie-plane main-heap region (0x40C00000..0x41000000) -- so if the log
      * stays empty the task only ever does <=128B control DMAs (stuck in the
      * SPURS job-queue kernel, never dispatching decode); if plane-sized PUTs
-     * appear we learn where the decoded frame actually lands. Env LBP_DMATRACE. */
+     * appear we learn where the decoded frame actually lands. Env SPU_DMATRACE_RAW. */
     {
-        static int64_t bt=-2; if (bt==-2){ const char* e=getenv("LBP_DMATRACE"); bt=e?1:0; }
+        static int64_t bt=-2; if (bt==-2){ const char* e=getenv("SPU_DMATRACE_RAW"); bt=e?1:0; }
         if (bt && spu->image_id==3) {
             uint32_t ea32 = (uint32_t)ea;
             int is_put   = ((cmd & 0x20) && !(cmd & 0x40));   /* PUT-family */

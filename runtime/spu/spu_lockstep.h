@@ -2,7 +2,7 @@
  * SPU lockstep gate (faithful-adopt, from canersaka's fork) -- a single global
  * run token passed round-robin among registered lifted-SPU host threads so only
  * one SPU executes lifted code at a time, in registration order, quantum-based.
- * Env-gated (YZ_SPU_LOCKSTEP), default OFF: unset => every call is one
+ * Env-gated (SPU_LOCKSTEP), default OFF: unset => every call is one
  * predicted-not-taken branch and behavior is byte-identical to no gate.
  *
  * Tick site is SPU_DRAIN (spu_context.h) -- the trampoline re-entry, the real
@@ -26,7 +26,7 @@ struct spu_context;
 /* -1 unarmed, 0 off, 1 on. */
 extern volatile int g_yz_lockstep_on;
 
-/* Arms from env (YZ_SPU_LOCKSTEP, YZ_LOCKSTEP_QUANTUM), idempotent, thread-safe;
+/* Arms from env (SPU_LOCKSTEP, SPU_LOCKSTEP_QUANTUM), idempotent, thread-safe;
  * prints the "[lockstep] ARMED" banner once. */
 int yz_lockstep_enabled(void);
 

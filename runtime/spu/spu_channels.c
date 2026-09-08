@@ -162,7 +162,7 @@ int spu_run_with_halt(void (*entry)(spu_context*), spu_context* ctx)
     ctx->steps = 0;   /* fresh run: step 0 is the entry */
     s_spu_halt_armed = 1;
     g_spu_trampoline_fn = 0;                        /* no stale transfer pending */
-    /* Lockstep gate (env YZ_SPU_LOCKSTEP, default off): join the round-robin
+    /* Lockstep gate (env SPU_LOCKSTEP, default off): join the round-robin
      * ring and BLOCK until this ctx holds the run token, so only one lifted SPU
      * executes at a time. No-op when unarmed. The thread-local halt env above
      * makes a token pause/resume mid-run safe. */
@@ -632,10 +632,10 @@ void spu_wrch(spu_context* ctx, uint32_t channel, u128 value)
  *
  * A blocking spu_rdch on an empty read channel parks the SPU host thread on a
  * per-SPU CV until a producer (mailbox/signal write, event raise) calls
- * spu_ch_wake -- never fabricating a value. Under YZ_SPU_LOCKSTEP the wait
+ * spu_ch_wake -- never fabricating a value. Under SPU_LOCKSTEP the wait
  * releases the run token first (block_begin) so a peer SPU that must post the
  * awaited data is never blocked on this ctx. A 10 ms re-poll is the missed-wake
- * safety net. Opt-in (env YZ_CH_BLOCK=1), default OFF while the producers
+ * safety net. Opt-in (env SPU_CH_BLOCK=1), default OFF while the producers
  * (mailbox/signal writes, MFC tag-status event raise) are being wired -- until
  * then blocking a read whose producer is missing would hang, so default stays
  * legacy non-blocking with zero regression, exactly like the lockstep gate.
@@ -649,7 +649,7 @@ int g_spu_force_ch_block = 0;
 static int yz_ch_block(void)
 {
     static int v = -1;
-    if (v < 0) v = getenv("YZ_CH_BLOCK") ? 1 : 0;
+    if (v < 0) v = getenv("SPU_CH_BLOCK") ? 1 : 0;
     return v || g_spu_force_ch_block;
 }
 
@@ -750,7 +750,7 @@ u128 spu_rdch(spu_context* ctx, uint32_t channel)
               for (int i = 0; i < 128; i++) if (r[i])
                   fprintf(stderr, "   rdch ch%-3d %llu%c", i, r[i], 10); } } }
     /* Block (never fabricate) on an empty producer-fed read channel (opt-in
-     * YZ_CH_BLOCK). RdEventStat now has a producer (the MFC tag-status event
+     * SPU_CH_BLOCK). RdEventStat now has a producer (the MFC tag-status event
      * raise above), but only block it when the SPU has actually enabled events
      * (event_mask != 0) -- a masked-off read must return 0 immediately, not
      * park forever. RdInMbox/RdSigNotify park on their PPU producers. */
@@ -1615,11 +1615,11 @@ void spu_indirect_branch(spu_context* ctx)
                 fprintf(stderr, "[cri-r4] policy entry pc=0xA00: forced ctxt->taskset LS[0x27B8]=0x0F000000\n"); }
         }
     }
-    /* LBP_IBCOV: image-3 (Bink SPU) PC-page coverage. Track which 0x1000-byte LS
+    /* SPU_IBCOV: image-3 (Bink SPU) PC-page coverage. Track which 0x1000-byte LS
      * pages the task's indirect branches land in; dump the set periodically. If
      * coverage stays in the kernel/wait region (~0x13xxx) the decode routine never
      * runs; if it spans a wide high range, decode executes but doesn't output. */
-    { static int s_cov = -1; if (s_cov < 0) s_cov = getenv("LBP_IBCOV") ? 1 : 0;
+    { static int s_cov = -1; if (s_cov < 0) s_cov = getenv("SPU_IBCOV") ? 1 : 0;
       if (s_cov && ctx->image_id == 3) {
         static uint8_t pages[64] = {0};   /* 64 pages * 0x1000 = 256KB LS */
         static uint64_t hits = 0;
@@ -2057,9 +2057,9 @@ void spu_indirect_branch(spu_context* ctx)
                 ctx->pc, ctx->image_id, ctx->gpr[0]._u32[0] & SPU_LS_MASK); }
     /* One-shot: the FMOD null-handler DSP node carries a PPU descriptor EA at
      * node+0x14 (observed 0x93C3C0). Dump it to identify which plugin/unit
-     * type never got its SPU code streamed (env LBP_DSPDESC=<hex ea>). */
+     * type never got its SPU code streamed (env SPU_DSPDESC=<hex ea>). */
     { static int _d = -1; static uint32_t _ea = 0;
-      if (_d < 0) { const char* e = getenv("LBP_DSPDESC");
+      if (_d < 0) { const char* e = getenv("SPU_DSPDESC");
         _ea = e ? (uint32_t)strtoul(e, 0, 16) : 0; _d = _ea ? 1 : 0; }
       if (_d == 1) { _d = 2;
         extern uint8_t* vm_base;

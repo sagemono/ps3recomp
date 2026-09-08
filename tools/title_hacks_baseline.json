@@ -1,32 +1,19 @@
 {
   "per_file": {
-    "libs/filesystem/cellFs.c": 1,
-    "libs/input/cellPad.c": 4,
-    "libs/spurs/cellSpurs.c": 3,
+    "libs/input/cellPad.c": 3,
     "libs/system/sysPrxForUser.c": 3,
     "libs/video/cellGcmSys.c": 1,
-    "libs/video/rsx_d3d12_backend.c": 11,
-    "libs/video/rsx_live_draw.c": 39,
-    "runtime/diag/yz_frontier_trace.c": 5,
-    "runtime/ppu/ppu_fs.cpp": 7,
     "runtime/ppu/ppu_hle.cpp": 15,
-    "runtime/ppu/ppu_loader.cpp": 44,
-    "runtime/ppu/ppu_sysprx.cpp": 3,
-    "runtime/spu/spu_channels.c": 14,
-    "runtime/spu/spu_context.h": 1,
-    "runtime/spu/spu_dma.h": 8,
-    "runtime/spu/spu_drain.c": 1,
-    "runtime/spu/spu_interp.c": 3,
-    "runtime/spu/spu_lifted_job.h": 1,
-    "runtime/spu/spu_lockstep.c": 2,
+    "runtime/ppu/ppu_loader.cpp": 4,
+    "runtime/spu/spu_channels.c": 11,
+    "runtime/spu/spu_dma.h": 4,
+    "runtime/spu/spu_interp.c": 2,
     "runtime/spu/spu_workload.c": 15,
-    "runtime/spu/spurs_job.c": 2,
-    "runtime/syscalls/lv2_register.c": 18,
+    "runtime/syscalls/lv2_register.c": 11,
     "runtime/syscalls/sys_cond.c": 4,
     "runtime/syscalls/sys_event.c": 20,
     "runtime/syscalls/sys_fs.c": 3,
-    "runtime/syscalls/sys_ppu_thread.c": 3,
-    "runtime/syscalls/sys_semaphore.c": 2
+    "runtime/syscalls/sys_ppu_thread.c": 1
   },
-  "total": 233
+  "total": 97
 }

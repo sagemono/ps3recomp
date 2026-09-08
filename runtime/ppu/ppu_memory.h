@@ -128,7 +128,7 @@ void        ppu_resv_break_store(uint64_t ea);
 /* ---------------------------------------------------------------------------
  * Write-watch hook for the INLINE writers.
  *
- * LBP_WW (ppu_loader.cpp) logs stores to a watched address along with the guest
+ * PPU_WWATCH (ppu_loader.cpp) logs stores to a watched address along with the guest
  * function responsible. Recompiled guest code calls the extern vm_write* family
  * there, so it is covered -- but everything in libs/ uses the inline family
  * below, and those stores were invisible to it. That makes "nothing writes this
@@ -136,7 +136,7 @@ void        ppu_resv_break_store(uint64_t ea);
  * of thing worth not being wrong about: an HLE writing a zero looks identical
  * to nobody writing at all.
  *
- * Cost is two compares against a pair that stay 0 unless LBP_WW is set, on the
+ * Cost is two compares against a pair that stay 0 unless PPU_WWATCH is set, on the
  * HLE path only -- guest stores never reach here.
  * -----------------------------------------------------------------------*/
 extern uint32_t g_ww_lo, g_ww_hi;

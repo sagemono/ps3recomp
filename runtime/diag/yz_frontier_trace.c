@@ -49,7 +49,7 @@ static int s_rearm_after_dump;
 /* Boots 49-51: dump I/O inside the bootstrap window (3.7MB bin + a 64k-line
  * formatted tsv, twice, at ~8s) is the leading rate suspect for the frame-52
  * early freeze (2/3). Stall dumps now wait for real progress; the tsv is
- * opt-in (YZ_FRONTIER_RING_TSV=1) — the .bin is complete and ring_decode.py
+ * opt-in (PS3_FRONTIER_RING_TSV=1) — the .bin is complete and ring_decode.py
  * reads it directly. */
 #define YZ_FRONTIER_PROGRESS_GATE 300u
 static volatile uint32_t s_progress;
@@ -186,10 +186,10 @@ static const char* yz_frontier_event_name(uint32_t type)
 
 int yz_frontier_trace_init(void)
 {
-    const char* enabled = getenv("YZ_FRONTIER_RING");
-    const char* path = getenv("YZ_FRONTIER_RING_PATH");
-    const char* compact = getenv("YZ_FRONTIER_RING_COMPACT");
-    const char* parity = getenv("YZ_FRONTIER_RING_PARITY");
+    const char* enabled = getenv("PS3_FRONTIER_RING");
+    const char* path = getenv("PS3_FRONTIER_RING_PATH");
+    const char* compact = getenv("PS3_FRONTIER_RING_COMPACT");
+    const char* parity = getenv("PS3_FRONTIER_RING_PARITY");
     if (!enabled || !*enabled || *enabled == '0')
         return 0;
 
@@ -215,25 +215,25 @@ int yz_frontier_trace_init(void)
             YZ_FRONTIER_CAPACITY, sizeof(s_records), s_compact,
             s_parity_only);
     fflush(stderr);
-    /* YZ_FRONTIER_RING=2 (2026-08-06 handoff-ordering frontier): arm at init
+    /* PS3_FRONTIER_RING=2 (2026-08-06 handoff-ordering frontier): arm at init
      * instead of waiting for the semantic Job B selection. The ring is a
      * wrap-around recorder, so an early arm still retains the newest 64k
      * events at dump time — exactly the pre-stall tail the race decode needs. */
     if (*enabled == '2' || *enabled == '3') {
-        const char* tsv = getenv("YZ_FRONTIER_RING_TSV");
+        const char* tsv = getenv("PS3_FRONTIER_RING_TSV");
         s_tsv_enabled = (tsv && *tsv == '1') ? 1 : 0;
         s_rearm_after_dump = 1;
         if (*enabled == '2') {
             yz_frontier_trace_arm(0xFFFFFFFFu, 0, 0, 0, 0, 0);
             fprintf(stderr, "[frontier-ring] armed at init "
-                    "(YZ_FRONTIER_RING=2, numbered dumps, re-arm, cap %d, "
+                    "(PS3_FRONTIER_RING=2, numbered dumps, re-arm, cap %d, "
                     "stall dumps gated until frame %u, tsv=%d)\n",
                     YZ_FRONTIER_MAX_DUMPS, YZ_FRONTIER_PROGRESS_GATE,
                     s_tsv_enabled);
         } else {
             s_arm_on_progress = 1;
             fprintf(stderr, "[frontier-ring] dormant until frame %u "
-                    "(YZ_FRONTIER_RING=3; bootstrap emits disabled — the "
+                    "(PS3_FRONTIER_RING=3; bootstrap emits disabled — the "
                     "armed-at-init ring correlated 5/5 with the early "
                     "freeze, boots 49-53)\n", YZ_FRONTIER_PROGRESS_GATE);
         }

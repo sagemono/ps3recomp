@@ -288,7 +288,7 @@ int64_t sys_event_queue_receive(ppu_context* ctx)
     uint32_t queue_id    = LV2_ARG_U32(ctx, 0);
     uint32_t event_addr  = LV2_ARG_PTR(ctx, 1);
     uint64_t timeout_us  = LV2_ARG_U64(ctx, 2);
-    /* YDKJ_THREADGATE: the creating thread is now blocking -> workers may run
+    /* PPU_THREADGATE: the creating thread is now blocking -> workers may run
      * (PS3 priority semantics). Their job objects are fully initialized by now. */
     { extern void ydkj_release_pending_threads(void); ydkj_release_pending_threads(); }
     if (ps3_log_verbose())

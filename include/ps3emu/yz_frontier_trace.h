@@ -9,8 +9,8 @@ extern "C" {
 /*
  * Fixed-size, process-lifetime flight recorder for the post-movie completion
  * frontier.  The hot path is allocation-free and performs no formatting or
- * I/O.  YZ_FRONTIER_RING enables the dormant recorder; a semantic Job B
- * selection arms it.  YZ_FRONTIER_RING_PATH selects the dump-file prefix.
+ * I/O.  PS3_FRONTIER_RING enables the dormant recorder; a semantic Job B
+ * selection arms it.  PS3_FRONTIER_RING_PATH selects the dump-file prefix.
  */
 enum yz_frontier_event_type {
     YZ_FT_ARM = 1,
