@@ -11,9 +11,9 @@
     "runtime/spu/spu_workload.c": 15,
     "runtime/syscalls/lv2_register.c": 11,
     "runtime/syscalls/sys_cond.c": 4,
-    "runtime/syscalls/sys_event.c": 20,
+    "runtime/syscalls/sys_event.c": 14,
     "runtime/syscalls/sys_fs.c": 3,
     "runtime/syscalls/sys_ppu_thread.c": 1
   },
-  "total": 97
+  "total": 91
 }
