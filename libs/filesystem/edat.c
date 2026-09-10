@@ -215,6 +215,99 @@ static void aes128_cmac(const uint8_t key[16], const uint8_t* msg, size_t len, u
  * Worth knowing: a PSOne Classic uses NP_PSX_KEY for BOTH license type 3 ("free")
  * and license type 2 (retail), so an ordinary retail ISO.BIN.EDAT decrypts with no
  * RAP at all. */
+/* ---------------------------------------------------------------------------
+ * SHA-1 / HMAC-SHA1
+ *
+ * Needed for the EDAT hash modes. Only AES-CMAC was here before, which covers
+ * hash mode 0x02; modes 0x01 and 0x04 are HMAC-SHA1 (with a 0x14- and a
+ * 0x10-byte key respectively) and a file using either could not be checked --
+ * so those flag combinations were refused outright rather than mis-verified.
+ * -----------------------------------------------------------------------*/
+
+typedef struct { uint32_t h[5]; uint64_t len; uint8_t buf[64]; size_t n; } sha1_ctx;
+
+static uint32_t rol32(uint32_t v, int c) { return (v << c) | (v >> (32 - c)); }
+
+static void sha1_block(sha1_ctx* c, const uint8_t* p)
+{
+    uint32_t w[80];
+    for (int i = 0; i < 16; i++)
+        w[i] = ((uint32_t)p[i*4] << 24) | ((uint32_t)p[i*4+1] << 16) |
+               ((uint32_t)p[i*4+2] << 8) | (uint32_t)p[i*4+3];
+    for (int i = 16; i < 80; i++)
+        w[i] = rol32(w[i-3] ^ w[i-8] ^ w[i-14] ^ w[i-16], 1);
+
+    uint32_t a = c->h[0], b = c->h[1], d = c->h[2], e = c->h[3], f = c->h[4];
+    for (int i = 0; i < 80; i++) {
+        uint32_t k, t;
+        if      (i < 20) { t = (b & d) | (~b & e);            k = 0x5A827999u; }
+        else if (i < 40) { t = b ^ d ^ e;                     k = 0x6ED9EBA1u; }
+        else if (i < 60) { t = (b & d) | (b & e) | (d & e);   k = 0x8F1BBCDCu; }
+        else             { t = b ^ d ^ e;                     k = 0xCA62C1D6u; }
+        uint32_t tmp = rol32(a, 5) + t + f + k + w[i];
+        f = e; e = d; d = rol32(b, 30); b = a; a = tmp;
+    }
+    c->h[0] += a; c->h[1] += b; c->h[2] += d; c->h[3] += e; c->h[4] += f;
+}
+
+static void sha1_init(sha1_ctx* c)
+{
+    c->h[0] = 0x67452301u; c->h[1] = 0xEFCDAB89u; c->h[2] = 0x98BADCFEu;
+    c->h[3] = 0x10325476u; c->h[4] = 0xC3D2E1F0u;
+    c->len = 0; c->n = 0;
+}
+
+static void sha1_update(sha1_ctx* c, const uint8_t* p, size_t n)
+{
+    c->len += n;
+    while (n) {
+        size_t take = 64 - c->n;
+        if (take > n) take = n;
+        memcpy(c->buf + c->n, p, take);
+        c->n += take; p += take; n -= take;
+        if (c->n == 64) { sha1_block(c, c->buf); c->n = 0; }
+    }
+}
+
+static void sha1_final(sha1_ctx* c, uint8_t out[20])
+{
+    uint64_t bits = c->len * 8;
+    uint8_t pad = 0x80;
+    sha1_update(c, &pad, 1);
+    pad = 0;
+    while (c->n != 56) sha1_update(c, &pad, 1);
+    uint8_t l[8];
+    for (int i = 0; i < 8; i++) l[i] = (uint8_t)(bits >> (56 - i*8));
+    sha1_update(c, l, 8);
+    for (int i = 0; i < 5; i++) {
+        out[i*4]   = (uint8_t)(c->h[i] >> 24); out[i*4+1] = (uint8_t)(c->h[i] >> 16);
+        out[i*4+2] = (uint8_t)(c->h[i] >> 8);  out[i*4+3] = (uint8_t)c->h[i];
+    }
+}
+
+/* HMAC-SHA1. The EDAT key lengths (0x10, 0x14) are both under the 64-byte block
+ * size, so the key is only zero-padded, never hashed down. */
+static void hmac_sha1(const uint8_t* key, size_t keylen,
+                      const uint8_t* msg, size_t msglen, uint8_t out[20])
+{
+    uint8_t k[64] = {0}, ipad[64], opad[64], inner[20];
+    if (keylen > 64) { sha1_ctx t; sha1_init(&t); sha1_update(&t, key, keylen); sha1_final(&t, k); }
+    else             memcpy(k, key, keylen);
+    for (int i = 0; i < 64; i++) { ipad[i] = k[i] ^ 0x36; opad[i] = k[i] ^ 0x5C; }
+
+    sha1_ctx c;
+    sha1_init(&c); sha1_update(&c, ipad, 64); sha1_update(&c, msg, msglen); sha1_final(&c, inner);
+    sha1_init(&c); sha1_update(&c, opad, 64); sha1_update(&c, inner, 20);   sha1_final(&c, out);
+}
+
+/* The per-block ERK/hash keys an EDAT wraps its own block keys under. Not
+ * title-specific and not a license: they are the same two constants for every
+ * EDAT on the platform, and useless without the file's own key material. */
+static const uint8_t EDAT_KEY_0[16] = {
+    0xBE,0x95,0x9C,0xA8,0x30,0x8D,0xEF,0xA2,0xE5,0xE1,0x80,0xC6,0x37,0x12,0xA9,0xAE };
+static const uint8_t EDAT_KEY_1[16] = {
+    0x4C,0xA9,0xC1,0x4B,0x01,0xC9,0x53,0x09,0x96,0x9B,0xEC,0x68,0xAA,0x0B,0xC0,0x81 };
+
 static const struct { const char* name; uint8_t key[16]; } KLIC_CANDIDATES[] = {
     { "NP_PSX_KEY",   { 0x52,0xC0,0xB5,0xCA,0x76,0xD6,0x13,0x4B,
                         0xB4,0x5F,0xC6,0x6C,0xA6,0x37,0xF2,0xC1 } },  /* PSOne Classics */
@@ -270,6 +363,22 @@ int edat_selftest(void)
     uint8_t mac[16];
     aes128_cmac(ck, NULL, 0, mac);
     if (memcmp(mac, cm, 16) != 0) return -3;
+
+    /* FIPS-180 SHA-1("abc") */
+    static const uint8_t sv[20] = {0xa9,0x99,0x3e,0x36,0x47,0x06,0x81,0x6a,0xba,0x3e,
+                                   0x25,0x71,0x78,0x50,0xc2,0x6c,0x9c,0xd0,0xd8,0x9d};
+    uint8_t sd[20]; sha1_ctx sc;
+    sha1_init(&sc); sha1_update(&sc, (const uint8_t*)"abc", 3); sha1_final(&sc, sd);
+    if (memcmp(sd, sv, 20) != 0) return -4;
+
+    /* RFC 2202 HMAC-SHA1 case 1 */
+    static const uint8_t hk[20] = {0x0b,0x0b,0x0b,0x0b,0x0b,0x0b,0x0b,0x0b,0x0b,0x0b,
+                                   0x0b,0x0b,0x0b,0x0b,0x0b,0x0b,0x0b,0x0b,0x0b,0x0b};
+    static const uint8_t hv[20] = {0xb6,0x17,0x31,0x86,0x55,0x05,0x72,0x64,0xe2,0x8b,
+                                   0xc0,0xb6,0xfb,0x37,0x8c,0x8e,0xf1,0x46,0xbe,0x00};
+    uint8_t hd[20];
+    hmac_sha1(hk, 20, (const uint8_t*)"Hi There", 8, hd);
+    if (memcmp(hd, hv, 20) != 0) return -5;
     return 0;
 }
 
@@ -284,6 +393,35 @@ int edat_is_npd(const char* host_path)
     size_t n = fread(m, 1, 4, f);
     fclose(f);
     return n == 4 && m[0] == 'N' && m[1] == 'P' && m[2] == 'D' && m[3] == 0;
+}
+
+/* The RIF key for a license-type-1/2 EDAT: $PS3_RIF_KEY as 32 hex chars, else
+ * the 16 raw bytes of a <file>.rifkey sidecar. This is the buyer's own license
+ * material for one content id -- deriving it from a .rap is deliberately out of
+ * scope here, so nothing in this tree has to carry license-conversion keys. */
+static int edat_rif_key(const char* in_path, uint8_t out[16])
+{
+    const char* e = getenv("PS3_RIF_KEY");
+    if (e) {
+        int n = 0;
+        for (; n < 16 && e[n*2] && e[n*2+1]; n++) {
+            char b[3] = { e[n*2], e[n*2+1], 0 };
+            char* end = NULL;
+            long v = strtol(b, &end, 16);
+            if (end != b + 2) break;
+            out[n] = (uint8_t)v;
+        }
+        if (n == 16) return 1;
+        fprintf(stderr, "[edat] PS3_RIF_KEY is not 32 hex chars -- ignoring\n");
+    }
+    char side[1100];
+    if ((size_t)snprintf(side, sizeof side, "%s.rifkey", in_path) >= sizeof side) return 0;
+    FILE* f = fopen(side, "rb");
+    if (!f) return 0;
+    size_t n = fread(out, 1, 16, f);
+    fclose(f);
+    if (n == 16) { fprintf(stderr, "[edat] RIF key from %s\n", side); return 1; }
+    return 0;
 }
 
 int edat_decrypt_file(const char* in_path, const char* out_path)
@@ -318,30 +456,37 @@ int edat_decrypt_file(const char* in_path, const char* out_path)
             in_path, version, license, flags, block_size,
             (unsigned long long)file_size);
 
-    if (flags & (EDAT_COMPRESSED_FLAG | EDAT_FLAG_0x20 | EDAT_FLAG_0x10 |
-                 EDAT_ENCRYPTED_KEY_FLAG | EDAT_DEBUG_DATA_FLAG)) {
-        fprintf(stderr, "[edat] unsupported flags 0x%08X (compressed / 0x20 / 0x10 / "
-                        "encrypted-key / debug are not implemented)\n", flags);
+    if (flags & (EDAT_COMPRESSED_FLAG | EDAT_DEBUG_DATA_FLAG)) {
+        fprintf(stderr, "[edat] unsupported flags 0x%08X (per-block zlib compression "
+                        "and debug data are not implemented)\n", flags);
         fclose(in); return -3;
     }
     if (block_size == 0 || block_size > (16u << 20)) { fclose(in); return -4; }
 
-    /* File key. An SDAT derives it from the header; an EDAT needs the klicensee,
-     * and only a license-type-3 "free" EDAT has one we can supply. */
     /* The file key.
      *
-     *   SDAT            derived from the header alone.
-     *   license type 3  the klicensee itself ("free" content).
-     *   license type 1/2 the RIF key from a per-console RAP, which this runtime has
-     *                   none of -- the klicensee still verifies against dev_hash for
-     *                   these, so a dev_hash match alone does NOT mean decryptable.
-     *                   (That cost a debugging round: a retail PSOne ISO.BIN.EDAT
-     *                   validates under NP_PSX_KEY and then fails every block hash,
-     *                   because the data is under the RIF key.) */
+     *   SDAT             derived from the header alone.
+     *   license type 3   the klicensee itself ("free" content).
+     *   license type 1/2 the RIF key. The klicensee still verifies against
+     *                    dev_hash for these -- dev_hash authenticates the
+     *                    HEADER -- but the DATA is under the RIF key, so a
+     *                    dev_hash match alone does NOT mean decryptable. That
+     *                    cost a debugging round twice: a retail PSOne
+     *                    ISO.BIN.EDAT validates under NP_PSX_KEY and then fails
+     *                    every block hash, and LittleBigPlanet's data.edat
+     *                    validates under a klicensee baked into its own EBOOT
+     *                    and likewise decrypts to noise.
+     *
+     * The RIF key is per-buyer license material, so it is never built in: it
+     * comes from the operator, via $PS3_RIF_KEY (32 hex chars) or a <file>.rifkey
+     * sidecar. Whether it is right is not taken on trust -- a wrong key fails
+     * block 0's hash below and nothing is written. */
     uint8_t key[16];
+    int have_key = 0;
     if (flags & SDAT_FLAG) {
         for (int i = 0; i < 16; i++) key[i] = (uint8_t)(dev_hash[i] ^ SDAT_KEY[i]);
         fprintf(stderr, "[edat] SDAT: key derived from dev_hash\n");
+        have_key = 1;
     } else {
         int found = -1;
         for (int c = 0; c < (int)(sizeof KLIC_CANDIDATES / sizeof KLIC_CANDIDATES[0]); c++) {
@@ -351,26 +496,45 @@ int edat_decrypt_file(const char* in_path, const char* out_path)
             aes128_cmac(ck, hdr, 0x60, mac);
             if (memcmp(mac, dev_hash, 16) == 0) { found = c; break; }
         }
-        if (found < 0) {
-            fprintf(stderr, "[edat] no known klicensee matches dev_hash\n");
-            fclose(in); return -5;
+        if (found >= 0 && (license & 3) == 3) {
+            memcpy(key, KLIC_CANDIDATES[found].key, 16);
+            have_key = 1;
+            fprintf(stderr, "[edat] klicensee %s verified against dev_hash\n",
+                    KLIC_CANDIDATES[found].name);
+        } else if (edat_rif_key(in_path, key)) {
+            have_key = 1;
+            fprintf(stderr, "[edat] license type %u: using the supplied RIF key%s\n",
+                    license, found >= 0 ? "" : " (dev_hash names an unknown klicensee)");
         }
-        if ((license & 3) != 3) {
-            fprintf(stderr, "[edat] license type %u: header klicensee is %s, but the "
-                            "DATA is encrypted with the RIF key from a per-console RAP, "
-                            "which this runtime does not have. Use the DRM-free (license "
-                            "type 3) form of this file.\n",
-                    license, KLIC_CANDIDATES[found].name);
+        if (!have_key) {
+            fprintf(stderr,
+                "[edat] license type %u needs a RIF key and none was supplied.\n"
+                "[edat]   set PS3_RIF_KEY=<32 hex chars>, or put the 16 raw bytes in\n"
+                "[edat]   %s.rifkey -- it is derived from your own .rap for this\n"
+                "[edat]   content id, which this runtime deliberately cannot do for you.\n",
+                license, in_path);
             fclose(in); return -6;
         }
-        memcpy(key, KLIC_CANDIDATES[found].key, 16);
-        fprintf(stderr, "[edat] klicensee %s verified against dev_hash\n",
-                KLIC_CANDIDATES[found].name);
     }
 
     uint32_t total_blocks = (uint32_t)((file_size + block_size - 1) / block_size);
-    const uint32_t meta_size = 0x10;
-    uint64_t data_base = 0x100 + (uint64_t)total_blocks * meta_size;
+
+    /* Layout. With FLAG_0x20 (or compression) each block carries a 0x20-byte
+     * metadata section IMMEDIATELY BEFORE its data; otherwise the 0x10-byte
+     * sections form one table at 0x100 and the data follows all of them. */
+    const uint32_t meta_size = (flags & (EDAT_COMPRESSED_FLAG | EDAT_FLAG_0x20)) ? 0x20 : 0x10;
+    const int      meta_leads = (flags & EDAT_FLAG_0x20) != 0;
+    const uint64_t data_base  = 0x100 + (uint64_t)total_blocks * meta_size;
+
+    /* Crypto/hash mode, exactly as the flags select it.
+     *   ENCRYPTED_KEY (0x08): the per-block ERK is itself wrapped under EDAT_KEY.
+     *   0x10 clear          -> hash is AES-CMAC over a 0x10-byte key
+     *   0x10 set, 0x20 clear-> HMAC-SHA1 over a 0x10-byte key
+     *   0x10 set, 0x20 set  -> HMAC-SHA1 over a 0x14-byte key
+     * The 0x14-byte case only ever fills the first 0x10; the tail stays zero. */
+    const int enc_key  = (flags & EDAT_ENCRYPTED_KEY_FLAG) != 0;
+    const int hash_alg = !(flags & EDAT_FLAG_0x10) ? 2 : (!(flags & EDAT_FLAG_0x20) ? 4 : 1);
+    const uint8_t* erk = (version == 4) ? EDAT_KEY_1 : EDAT_KEY_0;
 
     FILE* out = fopen(out_path, "wb");
     if (!out) { fclose(in); return -7; }
@@ -385,39 +549,72 @@ int edat_decrypt_file(const char* in_path, const char* out_path)
     int rc = 0;
     uint64_t written = 0;
     for (uint32_t b = 0; b < total_blocks; b++) {
+        uint64_t meta_off = meta_leads
+            ? 0x100 + (uint64_t)b * (meta_size + block_size)
+            : 0x100 + (uint64_t)b * meta_size;
+        uint64_t data_off = meta_leads ? meta_off + meta_size
+                                       : data_base + (uint64_t)b * block_size;
+
+        uint8_t meta[0x20];
+        if (fseek(in, (long)meta_off, SEEK_SET) != 0 ||
+            fread(meta, 1, meta_size, in) != meta_size) { rc = -9; break; }
+
+        /* With FLAG_0x20 the stored hash is the xor of the two halves. */
         uint8_t block_hash[16];
-        if (fseek(in, (long)(0x100 + (uint64_t)b * meta_size), SEEK_SET) != 0 ||
-            fread(block_hash, 1, 16, in) != 16) { rc = -9; break; }
+        if (meta_size == 0x20)
+            for (int k = 0; k < 16; k++) block_hash[k] = (uint8_t)(meta[k] ^ meta[k + 16]);
+        else
+            memcpy(block_hash, meta, 16);
 
         uint64_t len = block_size;
         if (b == total_blocks - 1 && (file_size % block_size))
             len = file_size % block_size;
         uint64_t padded = (len + 15) & ~(uint64_t)15;
 
-        if (fseek(in, (long)(data_base + (uint64_t)b * block_size), SEEK_SET) != 0 ||
+        if (fseek(in, (long)data_off, SEEK_SET) != 0 ||
             fread(enc, 1, (size_t)padded, in) != padded) { rc = -10; break; }
 
-        /* Block key -> the CBC key and the CMAC key are the same value.
-         * NPD version 0/1 derives it from a ZERO seed and uses a zero CBC IV;
-         * version 2+ seeds from dev_hash and uses the NPD digest as the IV. Getting
-         * this wrong fails the block hash rather than producing garbage, which is
-         * exactly why the hash is checked. */
+        /* Block key. Version 0/1 seeds from zero and uses a zero CBC IV;
+         * version 2+ seeds from dev_hash and uses the NPD digest as the IV.
+         * Getting any of it wrong fails the block hash rather than producing
+         * garbage, which is exactly why the hash is checked. */
         uint8_t bk[16] = {0}, kres[16];
         if (version > 1) memcpy(bk, dev_hash, 12);
         bk[12] = (uint8_t)(b >> 24); bk[13] = (uint8_t)(b >> 16);
         bk[14] = (uint8_t)(b >> 8);  bk[15] = (uint8_t)b;
         aes128_encrypt_block(rk_file, bk, kres);
 
-        uint8_t mac[16];
-        aes128_cmac(kres, enc, (size_t)padded, mac);
+        /* The hash seed is the block key run through the file key a second
+         * time when 0x10 is set. */
+        uint8_t hseed[16];
+        if (flags & EDAT_FLAG_0x10) aes128_encrypt_block(rk_file, kres, hseed);
+        else                        memcpy(hseed, kres, 16);
+
+        /* An encrypted ERK unwraps the CBC key and the hash key under EDAT_KEY
+         * (note: EDAT_KEY, not EDAT_HASH -- the hash constants are only used by
+         * the default-ERK mode, which nothing here selects). The IV is taken
+         * as-is either way. */
+        static const uint8_t zero_iv[16] = {0};
+        uint8_t ckey[16], hkey[20] = {0};
+        if (enc_key) {
+            aes128_cbc_decrypt(erk, zero_iv, kres,  ckey, 16);
+            aes128_cbc_decrypt(erk, zero_iv, hseed, hkey, 16);
+        } else {
+            memcpy(ckey, kres, 16);
+            memcpy(hkey, hseed, 16);
+        }
+
+        uint8_t mac[20];
+        if (hash_alg == 2) aes128_cmac(hkey, enc, (size_t)padded, mac);
+        else               hmac_sha1(hkey, (hash_alg == 1) ? 20 : 16,
+                                     enc, (size_t)padded, mac);
         if (memcmp(mac, block_hash, 16) != 0) {
             fprintf(stderr, "[edat] block %u hash mismatch -- wrong key or corrupt "
                             "file; stopping rather than writing garbage\n", b);
             rc = -11; break;
         }
 
-        static const uint8_t zero_iv[16] = {0};
-        aes128_cbc_decrypt(kres, (version <= 1) ? zero_iv : digest,
+        aes128_cbc_decrypt(ckey, (version <= 1) ? zero_iv : digest,
                            enc, dec, (size_t)padded);
         if (fwrite(dec, 1, (size_t)len, out) != len) { rc = -12; break; }
         written += len;
