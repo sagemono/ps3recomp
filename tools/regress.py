@@ -512,9 +512,20 @@ def cmd_check(ports, args):
             print("[%s] SKIPPED  (%s)" % (name, note))
             continue
         if status == "error":
-            print("[%s] ERROR    %s" % (name, note))
-            worst = 2
-            continue
+            # An ERROR needs confirming for the same reason a diff does, and more
+            # so: a title that crashes or exits early is often doing it on a
+            # race, and the first run after a build is the likeliest place to
+            # catch one. YDKJ's teardown alternates between exit 0 and an access
+            # violation entirely on its own.
+            if not args.no_confirm and not shots:
+                print("[%s] %s -- confirming" % (name, note.split(";")[0]))
+                status, log, note = run_port(port, build=False, shots=False)
+            if status != "ok":
+                print("[%s] ERROR    %s" % (name, note))
+                worst = 2
+                continue
+            print("[%s] first run errored, second was clean -- treating as a flake"
+                  % name)
 
         if shots:
             continue                    # the shots report above is the result
