@@ -58,11 +58,32 @@ if(LBP_ENABLE_SPU)
         "${PS3RECOMP_DIR}/lbp_spu/lifted/*/spu_recomp.c")
     list(LENGTH SPU_LIFTED N_SPU)
     message(STATUS "lifted SPU images: ${N_SPU}")
-    # Embedded raw SPURS taskset-policy bytes (not a *_recomp.c, so not glob-caught).
     set(SPU_SOURCES "${CMAKE_CURRENT_SOURCE_DIR}/gen/spu_workloads.c"
-        "${CMAKE_CURRENT_SOURCE_DIR}/gen/jobmods_register.c" ${SPU_LIFTED}
-        "${CMAKE_CURRENT_SOURCE_DIR}/spu_dispatch_mt.c"
+        ${SPU_LIFTED}
+        "${CMAKE_CURRENT_SOURCE_DIR}/spu_dispatch_mt.c")
+
+    # The WWS job modules and the SPURS taskset-policy blob are per-BUILD, not
+    # per-title: both are keyed by a content signature taken from the images
+    # THIS EBOOT ships, so a table generated from another release registers
+    # signatures that can never match and is worse than having none. They are
+    # also both optional -- jobmods_register.c self-registers from a
+    # constructor, and spurs_policy_blob_weak.c carries a weak
+    # g_taskset_policy_bytes -- so a tree that has not run extract_jobmods.py
+    # yet links and runs without them. Include each only if it is actually here.
+    set(JOBMODS "${CMAKE_CURRENT_SOURCE_DIR}/gen/jobmods_register.c")
+    if(EXISTS "${JOBMODS}")
+        list(APPEND SPU_SOURCES "${JOBMODS}")
+    else()
+        message(STATUS "lbp: no gen/jobmods_register.c -- WWS job modules not registered")
+    endif()
+
+    set(TASKSET_POLICY
         "${PS3RECOMP_DIR}/lbp_spu/lifted/taskset_policy/taskset_policy_bytes.c")
+    if(EXISTS "${TASKSET_POLICY}")
+        list(APPEND SPU_SOURCES "${TASKSET_POLICY}")
+    else()
+        message(STATUS "lbp: no taskset_policy_bytes.c -- using the weak stub")
+    endif()
 else()
     set(SPU_SOURCES "")
 endif()
