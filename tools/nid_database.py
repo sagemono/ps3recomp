@@ -450,6 +450,8 @@ _BUILTIN_FUNCTIONS: list[tuple[str, str]] = [
     ("sysPrxForUser", "_sys_heap_memalign"),                 # 0x44265c08 x2
     ("sysPrxForUser", "sys_spu_image_close"),                # 0xe0da8efd x2
     ("sysPrxForUser", "sys_mmapper_allocate_memory"),        # 0xb257540b x1
+    ("sceNp", "sceNpScoreInit"),
+    ("sceNp", "sceNpScoreTerm"),
     ("sceNp", "sceNpManagerGetStatus"),                      # 0xa7bff757 x5
     ("sceNp", "sceNpManagerGetNpId"),                        # 0xfe37a7f4 x5
     ("sceNp", "sceNpManagerRegisterCallback"),               # 0xe7dcd3b4 x5

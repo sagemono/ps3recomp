@@ -17,6 +17,7 @@
  * -----------------------------------------------------------------------*/
 
 static int  s_np_initialized = 0;
+static int  s_score_initialized = 0;
 static char s_fake_username[SCE_NP_ONLINEID_MAX_LENGTH + 1] = "PS3Player";
 
 /* ---------------------------------------------------------------------------
@@ -246,3 +247,25 @@ s32 sceNpManagerGetNpId(SceNpId* npId)               { return sceNpGetNpId(0, np
 s32 sceNpManagerGetOnlineId(SceNpOnlineId* onlineId) { return sceNpGetOnlineId(0, onlineId); }
 s32 sceNpManagerGetOnlineName(SceNpOnlineName* name) { return sceNpGetOnlineName(0, name); }
 s32 sceNpManagerGetAccountAge(s32* age)              { return sceNpGetAccountAge(0, age); }
+
+/* Score setup is local even while the NP manager is offline. Games may
+ * initialize it before starting the worker that decides whether to use PSN. */
+s32 sceNpScoreInit(void)
+{
+    if (s_score_initialized)
+        return SCE_NP_COMMUNITY_ERROR_ALREADY_INITIALIZED;
+    if (!s_np_initialized)
+        return SCE_NP_ERROR_NOT_INITIALIZED;
+    s_score_initialized = 1;
+    return CELL_OK;
+}
+
+s32 sceNpScoreTerm(void)
+{
+    if (!s_score_initialized)
+        return SCE_NP_COMMUNITY_ERROR_NOT_INITIALIZED;
+    if (!s_np_initialized)
+        return SCE_NP_ERROR_NOT_INITIALIZED;
+    s_score_initialized = 0;
+    return CELL_OK;
+}
