@@ -11,10 +11,15 @@
 # A port that is not on this machine is SKIPPED, not failed -- nobody owns all
 # seven titles, and the gate has to be useful to someone who owns two.
 #
-# Deliberately NOT setting RSX_LIVE_DRAW: the draw milestone is recorded in
+# The default run does NOT set RSX_LIVE_DRAW: the draw milestone is recorded in
 # rsx_commands.c before the backend call, so draws are captured with the null
 # backend too. That keeps a gate run headless, faster, and identical on Linux
 # and macOS, where there is no D3D12 at all.
+#
+# It also means the default run cannot tell you whether a title still RENDERS,
+# only whether it still submits draw methods -- and for VF5, whose draws exist
+# only on the live-draw path, not even that. `regress.py --shots` covers the
+# gap: see `render_env` below.
 #
 # `expect = "timeout"` is the normal case: a title that reaches its frame loop
 # never exits, so being killed on the timeout is what success looks like. The
@@ -56,6 +61,26 @@ build = """cmake -S . -B build-gate -G "{generator}"   -DCMAKE_C_COMPILER={cc} -
 # will pick it up on their next rebuild.
 port_build = """python "{toolkit}/tools/gen_hle_nids.py" --all --out src/gen/ppu_hle_nids.cpp && cmake -S . -B build-gate -G "{generator}"   -DCMAKE_C_COMPILER={cc} -DCMAKE_CXX_COMPILER={cxx}   -DCMAKE_BUILD_TYPE=Release   -DPS3RECOMP_DIR="{toolkit}"   -DPS3RECOMP_RUNTIME_LIB="{toolkit}/build-gate/{runtime_lib}" && cmake --build build-gate"""
 
+# `render_env` is how each port is run when `regress.py --shots` is passed: the
+# configuration its own README documents, which is what produced its known-good
+# screenshots. Every rendering port needs RSX_LIVE_DRAW=1 for caner's live
+# NV4097 engine; Rubber Ducky renders through the plain D3D12 backend instead
+# and wants its texture/display knobs. This is deliberately NOT the default --
+# the headless run stays the CI gate, because it needs no GPU and behaves the
+# same on Linux and macOS. But headless means the gate has no opinion on whether
+# a title still renders, and for VF5, whose draws exist only on the live path,
+# headless looks identical to drawing nothing at all.
+
+# `render_gold` is the port's OWN reference screenshot, tracked in its repo --
+# the picture someone kept because the title looked right that day. It is the
+# only statement anywhere of what a port is supposed to look like, and the
+# goldens in tools/regress/ cannot serve that purpose: they were all recorded
+# after the regressions they were meant to catch. --shots writes a side-by-side
+# <port>-vs-gold.png when one exists. No pixel diff -- the references carry
+# window chrome at assorted sizes and attract modes animate, so a strict
+# comparison would only cry wolf. twistedmetal and youdontknowjack have none
+# tracked yet; capturing one, next time either renders, is worth doing.
+
 # --- showcase titles -------------------------------------------------------
 
 [[port]]
@@ -65,6 +90,8 @@ cmd     = ["build-gate/vf5", "game/EBOOT.elf"]
 timeout = 60
 expect  = "timeout"
 env     = { PS3_VFS_ROOT = "vfs/PS3_GAME/USRDIR" }
+render_env = { RSX_LIVE_DRAW = "1" }
+render_gold = "docs/now_loading.png"
 
 [[port]]
 name    = "tokyojungle"
@@ -81,6 +108,7 @@ timeout = 90
 # code is not asserted -- the run is.
 expect  = "any"
 env     = { PS3_VFS_ROOT = "input" }
+render_env = { RSX_LIVE_DRAW = "1" }
 
 # --- regression subjects: not being worked on, which is exactly why they are
 #     here. These are the ports a shared-runtime change breaks silently. ------
@@ -92,6 +120,7 @@ cmd     = ["build-gate/twistedmetal", "input/EBOOT.elf"]
 timeout = 90
 expect  = "timeout"
 env     = { PS3_VFS_ROOT = "input" }
+render_env = { RSX_LIVE_DRAW = "1" }
 
 [[port]]
 name    = "simpsons"
@@ -100,6 +129,8 @@ cmd     = ["build-gate/simpsons", "vfs/PS3_GAME/USRDIR/EBOOT.elf"]
 timeout = 90
 expect  = "timeout"
 env     = { PS3_VFS_ROOT = "vfs/PS3_GAME/USRDIR" }
+render_env = { RSX_LIVE_DRAW = "1" }
+render_gold = "docs/media/02-attract-canyon.png"
 
 [[port]]
 name    = "youdontknowjack"
@@ -108,6 +139,7 @@ cmd     = ["build-gate/ydkj_boot", "input/EBOOT.elf"]
 timeout = 90
 expect  = "timeout"
 env     = { PS3_VFS_ROOT = "input" }
+render_env = { RSX_LIVE_DRAW = "1" }
 
 [[port]]
 name    = "rubberducky"
@@ -116,3 +148,6 @@ cmd     = ["build-gate/rubberducky", "input/EBOOT.elf"]
 timeout = 60
 expect  = "timeout"
 env     = { PS3_VFS_ROOT = "input", RD_SPU_INTERP = "1" }
+render_env = { RT_DISPLAY_BY_SIZE = "1", TEX_OFF_BIAS = "3", RSX_ACCUM_FRAME = "1" }
+render_gold = "docs/images/ducky.png"
+

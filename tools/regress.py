@@ -183,7 +183,93 @@ def golden_path(name):
 # running a port
 # --------------------------------------------------------------------------
 
-def run_port(port, build=True):
+def report_shots(name, shots_dir, gold=None):
+    """Summarise the frames a --shots run left, converting the best to PNG.
+
+    `gold` is the port's own reference screenshot, checked into its repo -- the
+    picture someone kept because the title looked right that day. Several ports
+    have one (vf5 docs/now_loading.png, simpsons docs/media/*.png, rubberducky
+    docs/images/ducky.png), and they are the only statement anywhere of what a
+    port is SUPPOSED to look like. When one exists this writes a side-by-side
+    <port>-vs-gold.png, because "does it look right" is a question for a person
+    and a contact sheet answers it in one glance. No pixel diff: the references
+    were captured with window chrome at different sizes, and a title's attract
+    mode is animating anyway, so a strict comparison would only ever cry wolf.
+
+    The metric is DISTINCT COLOURS, not brightness. "Is anything on it" sounds
+    like a non-black test, and a non-black test lies: a title that presents a
+    cleared buffer fills the screen with one flat colour and scores 100%
+    non-black while showing nothing. Simpsons did exactly that on the first run
+    of this code. A uniform frame has 1 unique colour; a rendered scene has
+    thousands. So rank frames by unique colours and keep the richest.
+
+    PPM (live NV4097 engine) and BMP (plain D3D12 backend) both turn up; which
+    one depends on the port, so take whatever is there.
+    """
+    frames = sorted(f for f in os.listdir(shots_dir)
+                    if f.lower().endswith((".ppm", ".bmp")))
+    if not frames:
+        print("    shots: none -- the title presented no frame")
+        return
+    try:
+        from PIL import Image
+    except ImportError:
+        print("    shots: %d frame(s) in %s (install Pillow to judge them)"
+              % (len(frames), shots_dir))
+        return
+
+    best, best_uniq, best_name = None, -1, ""
+    for f in frames:
+        try:
+            im = Image.open(os.path.join(shots_dir, f)).convert("RGB")
+        except Exception as e:                       # a truncated final frame
+            continue
+        # getcolors returns None past maxcolors, which itself means "plenty".
+        cols = im.getcolors(maxcolors=1 << 16)
+        uniq = (1 << 16) if cols is None else len(cols)
+        if uniq > best_uniq:
+            best, best_uniq, best_name = im, uniq, f
+    if best is None:
+        print("    shots: %d frame(s), none readable" % len(frames))
+        return
+
+    out = os.path.join(shots_dir, name + ".png")
+    best.save(out)
+    verdict = ("FLAT -- one colour, nothing rendered" if best_uniq <= 1 else
+               "nearly flat, likely a cleared buffer" if best_uniq < 32 else
+               "has content")
+    print("    shots: %d frame(s); best %s %dx%d, %s colours -- %s"
+          % (len(frames), best_name, best.width, best.height,
+             "65536+" if best_uniq >= (1 << 16) else str(best_uniq), verdict))
+    print("           -> %s" % out)
+
+    if not (gold and os.path.exists(gold)):
+        return
+    try:
+        g = Image.open(gold).convert("RGB")
+    except Exception as e:
+        print("           gold %s unreadable (%s)" % (gold, e))
+        return
+    gcols = g.getcolors(maxcolors=1 << 16)
+    guniq = (1 << 16) if gcols is None else len(gcols)
+    print("           gold %s: %dx%d, %s colours"
+          % (os.path.basename(gold), g.width, g.height,
+             "65536+" if guniq >= (1 << 16) else str(guniq)))
+
+    h = max(best.height, g.height)
+    def fit(im):
+        return im if im.height == h else im.resize(
+            (max(1, int(im.width * h / im.height)), h))
+    a, b = fit(g), fit(best)
+    sheet = Image.new("RGB", (a.width + b.width + 24, h), (24, 24, 24))
+    sheet.paste(a, (0, 0))
+    sheet.paste(b, (a.width + 24, 0))
+    cmp_path = os.path.join(shots_dir, name + "-vs-gold.png")
+    sheet.save(cmp_path)
+    print("           side by side (gold | now) -> %s" % cmp_path)
+
+
+def run_port(port, build=True, shots=False):
     """Run one port and return (status, log_path, note).
 
     status is 'ok' when the run matched the port's `expect`, 'skip' when the
@@ -227,6 +313,24 @@ def run_port(port, build=True):
 
     env = dict(penv)
     env["PS3_MILESTONE_OUT"] = log
+
+    # --shots: run the port the way its README documents instead of headless,
+    # and keep the frames. The default gate run is deliberately headless on the
+    # null backend -- fast, GPU-free, identical on Linux and macOS -- but that
+    # means it has no opinion at all on whether a title still RENDERS. VF5 draws
+    # only through the live engine, so headless it looks like it draws nothing.
+    # Two dump paths exist and which fires depends on the port, so set both: the
+    # live NV4097 engine writes .ppm (and reports nonblack= itself), the plain
+    # D3D12 backend writes .bmp.
+    shots_dir = None
+    if shots:
+        env.update({str(k): str(v) for k, v in port.get("render_env", {}).items()})
+        shots_dir = os.path.join(tempfile.gettempdir(), "ps3recomp_shots", name)
+        shutil.rmtree(shots_dir, ignore_errors=True)
+        os.makedirs(shots_dir, exist_ok=True)
+        env.update({"LD_FRAME_DUMP": shots_dir, "LD_FRAME_DUMP_EVERY": "30",
+                    "CELLMARK_DUMP": "6", "CELLMARK_DUMP_DIR": shots_dir,
+                    "CELLMARK_DUMP_MINDRAWS": "5"})
     # Verbose logging starves guest threads and changes what the title does, so
     # a gate run with it on would be measuring a different program.
     env.setdefault("PS3_VERBOSE", "0")
@@ -266,6 +370,10 @@ def run_port(port, build=True):
     if not os.path.exists(log):
         return "error", None, ("no milestone log produced -- is this port built "
                                "against a runtime that has runtime/milestone.c?")
+    if shots_dir:
+        g = port.get("render_gold")
+        report_shots(name, shots_dir,
+                     os.path.join(pdir, g) if g else None)
     return "ok", log, ""
 
 
@@ -355,7 +463,8 @@ def cmd_record(ports, args):
     for name in args.names:
         port = ports[name]
         print("[%s] running..." % name)
-        status, log, note = run_port(port, build=not args.no_build)
+        status, log, note = run_port(port, build=not args.no_build,
+                                     shots=getattr(args, "shots", False))
         if status != "ok":
             print("  %s: %s" % (status.upper(), note))
             rc = rc or (0 if status == "skip" else 2)
@@ -376,13 +485,23 @@ def cmd_record(ports, args):
 def cmd_check(ports, args):
     names = sorted(ports) if args.all else args.names
     worst = 0
+    shots = getattr(args, "shots", False)
+    if shots:
+        # A --shots run is a DIFFERENT configuration -- RSX_LIVE_DRAW and the
+        # port's own render knobs -- so its milestone stream is legitimately not
+        # the headless one. Diffing it against the headless golden reports
+        # dozens of "regressions" that are only the profile change; ydkj showed
+        # 37 of them. Report what it drew and leave the golden alone.
+        print("--shots: render profile, not the headless gate -- "
+              "milestones are not diffed")
     for name in names:
         port = ports[name]
         gp = golden_path(name)
-        if not os.path.exists(gp):
+        if not shots and not os.path.exists(gp):
             print("[%s] NO GOLDEN -- run: python tools/regress.py record %s" % (name, name))
             continue
-        status, log, note = run_port(port, build=not args.no_build)
+        status, log, note = run_port(port, build=not args.no_build,
+                                     shots=getattr(args, "shots", False))
         if status == "skip":
             print("[%s] SKIPPED  (%s)" % (name, note))
             continue
@@ -391,6 +510,8 @@ def cmd_check(ports, args):
             worst = 2
             continue
 
+        if shots:
+            continue                    # the shots report above is the result
         fails, notes = diff(parse_log(gp), parse_log(log))
         if fails:
             print("[%s] FAIL     %d regression(s)" % (name, len(fails)))
@@ -428,6 +549,11 @@ def main():
     c.add_argument("--no-build", action="store_true")
     c.add_argument("-v", "--verbose", action="store_true",
                    help="also show NEW / RAISED / ORDER on a passing port")
+    for q in (r, c):
+        q.add_argument("--shots", action="store_true",
+                       help="run each port in its README's render configuration "
+                            "(render_env) and keep the presented frames. Needs a "
+                            "GPU, so it is opt-in and not what CI runs.")
 
     args = ap.parse_args()
     ports, toolkit = load_registry()
