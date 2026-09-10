@@ -297,6 +297,34 @@ Metal reaches `cellGameCreateGameData` for the first time**, and that path calls
 `cellGameSetParamString`, which nothing implemented. Exactly the kind of thing a
 port owner cannot see from inside their own title.
 
+*The 2026-09-10 SPU lifter and EDAT batch*
+- **`bi $rN` classified by basic block, not by function** — `compute_link_returns`
+  bounded both backward scans by the enclosing lifted *function*, but the lifter
+  splits long straight-line runs into several functions that chain by
+  fallthrough, and a split is not a control-flow edge. A scan that stops there
+  stops mid-block, having seen only part of it, which defeats the predecessor
+  refinement the function already does (#169).
+- **`hbra`/`hbrr` decoded as the 7-bit opcodes they are** — only `hbr` is the
+  11-bit RR form; testing the other two against a 9-bit field can never match, so
+  a stub carrying a branch hint decoded to UNKNOWN and the SPU fell into
+  branch-to-0. Found independently of the identical fix already in the tree,
+  from a different witness (#166).
+- **`--extra-funcs` passthrough** in `build_spu_workloads` (#165) and
+  `lift_jobmods` (#170). An SPU address reached only by an indirect branch is
+  invisible to `--auto-functions`; an image entered by an *interrupt vector* has
+  no branch path from its entry point at all. The job modules need it most —
+  they all stream into the same LS 0x4000 buffer with one resident at a time, so
+  a BRANCH-TO-0 names an address with no module attached to it.
+- **EDAT license types 1 and 2, and the 0x08/0x10/0x20 flags** — `edat.c` handled
+  only self-keyed SDATs and license-type-3 "free" EDATs with one of four public
+  klicensees, refusing everything else up front. Adds the missing HMAC-SHA1 hash
+  modes 0x01 and 0x04 alongside the AES-CMAC mode 0x02 that was there (#167).
+- **List-DMA issue tracing** — a list DMA takes its own path through the MFC and
+  never reaches `mfc_do_transfer`, so the always-on per-transfer trace never saw
+  one. Two lines that turn a run where everything downstream depends on a single
+  invisible list command into something you can read: the destination LSA at
+  issue, and what a stall handler leaves behind (#168).
+
 ### Paulo Adriano Alves — [@pauloadrianoalves](https://github.com/pauloadrianoalves)
 Initial **PPU boot path** and supporting tooling (PR #3, partially incorporated
 in **v0.6.2** — the SPU portions were superseded by the v0.6.0 SPU subsystem and

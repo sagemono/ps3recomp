@@ -508,6 +508,26 @@ def cmd_check(ports, args):
             continue
         status, log, note = run_port(port, build=not args.no_build,
                                      shots=getattr(args, "shots", False))
+
+        # DISCARD the first run after a build and measure the second.
+        #
+        # Confirming a red with a second run catches an INDEPENDENT flake. It
+        # does not catch a CORRELATED one, and the flake this gate actually has
+        # is correlated: the post-build state itself -- cold page cache for a
+        # 20-40 MB executable and its assets -- is what shifts guest timing, and
+        # both the first run and its confirmation land inside that window.
+        #
+        # Measured: vf5 reported 11 regressions and confirmed them, twice, on a
+        # tree where four consecutive warm runs all give a clean 104 keys. YDKJ
+        # did the same thing earlier at 120 -> 80. Two ports, same shape, and in
+        # both cases a PR was blamed for it.
+        #
+        # So the build-warmed run is a warm-up whose result is thrown away.
+        # Costs one run per port per gate invocation; buys a number that means
+        # something.
+        if status == "ok" and not args.no_build and not shots:
+            status, log, note = run_port(port, build=False, shots=False)
+
         if status == "skip":
             print("[%s] SKIPPED  (%s)" % (name, note))
             continue
