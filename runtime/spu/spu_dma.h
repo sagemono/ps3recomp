@@ -736,6 +736,17 @@ static inline int mfc_list_stall_ack(struct mfc_engine* mfc, spu_context* spu,
         fprintf(stderr, "[mfc-list] RESUME img=%d tag=%u elem@0x%05X left=%u\n",
                 spu->image_id, t, spu->list_stall_elem_lsa[t],
                 spu->list_stall_remaining[t]); }
+    /* What the stall handler left in the remaining elements, and where they are
+     * about to land. If the handler was supposed to fill in the claimed job's
+     * EA and did not, the elements read back empty and the transfer is a no-op
+     * -- which looks identical to "the pipeline never ran" from the PPU side. */
+    { uint32_t _e = spu->list_stall_elem_lsa[t] & SPU_LS_MASK;
+      fprintf(stderr, "[mfc-list] RESUME-ELEMS dest=0x%05X elems\n0x%05X:",
+              spu->list_stall_dest_lsa[t], _e);
+      for (uint32_t _o = 0; _o < 16 && (_e + _o) + 3 < SPU_LS_SIZE; _o += 4)
+          fprintf(stderr, " %02X%02X%02X%02X", spu->ls[_e+_o], spu->ls[_e+_o+1],
+                  spu->ls[_e+_o+2], spu->ls[_e+_o+3]);
+      fprintf(stderr, "\n"); }
     int rc = mfc_run_list(spu, spu->list_stall_elem_lsa[t], spu->list_stall_remaining[t],
                           spu->list_stall_dest_lsa[t], spu->list_stall_ea_base[t],
                           spu->list_stall_cmd[t], t);
@@ -1288,6 +1299,15 @@ static inline int mfc_submit(mfc_engine* mfc, spu_context* spu, uint32_t cmd)
      * supplies the low-32 EA; only EAH carries through. Passing `lsa` as the
      * list address read list elements from the transfer DESTINATION. */
     if (mfc_is_list(cmd)) {
+        /* List DMAs are rare, and they skip the per-element trace above, so
+         * they are easy to miss entirely while diagnosing a pipeline that
+         * never fills. Always report the issue: the DESTINATION lsa is the
+         * value the whole transfer hangs on. */
+        { static int _l = 0; if (_l++ < 32)
+            fprintf(stderr, "[mfc-list] ISSUE img=%d cmd=0x%02X dest_lsa=0x%05X "
+                    "list\n0x%05X size=0x%X (%u elems) tag=%u\n",
+                    spu->image_id, cmd, lsa, (uint32_t)ea & SPU_LS_MASK,
+                    size, size / 8, tag); }
         rc = mfc_do_list_transfer(spu, (uint32_t)ea & SPU_LS_MASK,
                                   ea & 0xFFFFFFFF00000000ull, size, cmd);
     } else {
