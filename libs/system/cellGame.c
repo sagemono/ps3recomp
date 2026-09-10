@@ -580,6 +580,46 @@ s32 cellHddGameCheck(u32 version, const char* dirName, u32 errDialog,
     return CELL_HDDGAME_RET_OK;
 }
 
+/* The write side of GetParamString: a title that has just created its game data
+ * fills PARAM.SFO in before writing it out. Twisted Metal only reaches this at
+ * all once cellGameCreateGameData works, which is why the NID sat unresolved
+ * until sage's cellGame work landed -- the regression gate caught it as
+ * UNRESOLVED 0xDAA5CD20 the first time the two were built together.
+ *
+ * Stores into the same statics GetParamString reads, so Create -> Set -> Get
+ * returns what the title wrote. ponytail: in memory only, not persisted to a
+ * PARAM.SFO on disk. Add that when a title is found that writes the data, exits,
+ * and expects to read it back on the next run. */
+s32 cellGameSetParamString(s32 id, const char* buf)
+{
+    /* `buf` is a GUEST address (raw r4), like GetParamString's -- a host
+     * dereference here faults. See [[guest-pointer-abi]]. */
+    uint32_t buf_ea = (uint32_t)(uintptr_t)buf;
+    if (!buf_ea)
+        return CELL_GAME_ERROR_PARAM;
+    const char* src = (const char*)(vm_base + buf_ea);
+
+    char*  dst;
+    size_t cap;
+    if (id >= CELL_GAME_PARAMID_TITLE && id <= CELL_GAME_PARAMID_TITLE_TURKISH) {
+        dst = s_title;      cap = sizeof s_title;      /* localised TITLE_## all land here */
+    } else {
+        switch (id) {
+        case CELL_GAME_PARAMID_TITLE_ID:       dst = s_title_id;   cap = sizeof s_title_id;   break;
+        case CELL_GAME_PARAMID_VERSION:        dst = s_version;    cap = sizeof s_version;    break;
+        case CELL_GAME_PARAMID_PS3_SYSTEM_VER: dst = s_system_ver; cap = sizeof s_system_ver; break;
+        case CELL_GAME_PARAMID_APP_VER:        dst = s_app_ver;    cap = sizeof s_app_ver;    break;
+        default:
+            printf("[cellGame] SetParamString: unknown param id %d (ignored)\n", id);
+            return CELL_OK;
+        }
+    }
+    strncpy(dst, src, cap - 1);
+    dst[cap - 1] = '\0';
+    printf("[cellGame] SetParamString(id=%d) = \"%s\"\n", id, dst);
+    return CELL_OK;
+}
+
 s32 cellGameGetParamInt(s32 id, s32* value)
 {
     printf("[cellGame] GetParamInt(id=%d)\n", id);
