@@ -60,8 +60,9 @@ static char s_app_ver[16]   = "01.00";
 static char s_content_path[CELL_GAME_PATH_MAX] = "./gamedata/dev_hdd0/game";
 static int  s_content_path_resolved = 0;
 
-/* Resolved the same way ppu_fs.cpp resolves /dev_hdd0: $PS3_HDD0_ROOT if set,
- * else <ppu_vfs_root>/dev_hdd0. */
+/* Resolved the same way ppu_fs.cpp resolves the /dev_hdd0 mount: $PS3_HDD0_ROOT
+ * if set, else the VFS root -- in both cases with the "/dev_hdd0/" prefix
+ * stripped, which is what ppu_fs does to the guest path. */
 extern const char* ppu_vfs_root;
 
 static const char* content_root(void)
@@ -72,8 +73,11 @@ static const char* content_root(void)
         if (hdd0 && *hdd0)
             snprintf(s_content_path, sizeof s_content_path, "%s/game", hdd0);
         else if (ppu_vfs_root && *ppu_vfs_root && strcmp(ppu_vfs_root, ".") != 0)
-            snprintf(s_content_path, sizeof s_content_path,
-                     "%s/dev_hdd0/game", ppu_vfs_root);
+            /* NB: <root>/game, not <root>/dev_hdd0/game. ppu_fs STRIPS the mount
+             * prefix -- guest /dev_hdd0/game/<id> resolves to <root>/game/<id>.
+             * Spelling the device out here just recreates the same split one
+             * directory over, with each side quietly making its own tree. */
+            snprintf(s_content_path, sizeof s_content_path, "%s/game", ppu_vfs_root);
         for (char* q = s_content_path; *q; q++) if (*q == 0x5C) *q = 0x2F;
         printf("[cellGame] content root (host /dev_hdd0/game): %s\n", s_content_path);
     }
