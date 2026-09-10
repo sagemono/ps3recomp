@@ -12,9 +12,11 @@
  * stderr for the FAIL dump: which test, which thread/object, and counters).
  */
 
-#define WIN32_LEAN_AND_MEAN
-#include <windows.h>
+#include "../../runtime/platform/win32_compat.h"
+#include "../../runtime/platform/msvc_compat.h"
+#ifdef _WIN32
 #include <process.h>
+#endif
 
 #include <stdint.h>
 #include <stdio.h>

@@ -22,6 +22,7 @@
 #include <pthread.h>
 #include <unistd.h>
 #include <sched.h>
+#include <errno.h>   /* ETIMEDOUT: its value differs per host, so never inline it */
 #endif
 
 /* ---------------------------------------------------------------------------
@@ -155,8 +156,21 @@ static u32 s_next_heap_id = 1;
  * Process management
  * -----------------------------------------------------------------------*/
 
+/* The status the guest asked to exit with, published before the host exit()
+ * runs. exit() gives its argument to _exit and to nothing else -- an atexit
+ * handler cannot read it -- so without this the only place a guest's chosen
+ * status is visible is the process's own exit code. That forces a harness to
+ * exit with the guest's status rather than with its own verdict about the run,
+ * and makes "the guest asked for 0" indistinguishable from "the harness fell
+ * through and returned 0". Written before any of the diagnostic detours below,
+ * so a parked or held exit still records what was asked for. */
+int g_sys_process_exit_called = 0;
+s32 g_sys_process_exit_code   = 0;
+
 void sys_process_exit(s32 exitcode)
 {
+    g_sys_process_exit_code   = exitcode;
+    g_sys_process_exit_called = 1;
     printf("[sysPrxForUser] sys_process_exit(code=%d)\n", exitcode);
 #ifdef _WIN32
     /* The RSX present thread runs at ~60Hz; a title that finishes in a few ms
@@ -703,7 +717,11 @@ s32 sys_lwcond_wait(sys_lwcond_t_hle* lwcond, u64 timeout)
         }
         int rc = pthread_cond_timedwait(&s_lwcond[cslot].cv,
                                          &s_lwmutex[mslot].mtx, &ts);
-        if (rc == 110 /* ETIMEDOUT */)
+        /* ETIMEDOUT, not the 110 that was written here: 110 is Linux's value
+         * and Darwin's is 60, so on macOS a real timeout fell through and the
+         * guest was told CELL_OK -- that its condition had been signalled. A
+         * lwcond poll loop then proceeds on state nobody produced. */
+        if (rc == ETIMEDOUT)
             return CELL_ETIMEDOUT;
     }
 #endif
