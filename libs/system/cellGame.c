@@ -692,3 +692,43 @@ s32 cellGameGetLocalWebContentPath(char* path)
 
     return CELL_OK;
 }
+
+/* cellGameContentErrorDialog -- firmware puts a system error message on screen
+ * ("the game data is corrupted", "not enough space", ...) and, for the 1xx
+ * types, the title exits as soon as it returns.
+ *
+ * It has to exist even as a stub, and it has to SAY what it was asked to show.
+ * LBP calls this as the very last thing its "bringup" thread does before
+ * sys_ppu_thread_exit(0): the thread's result feeds main's startup gate, main
+ * sees a false, runs its teardown and calls exit(0). Unimplemented, the whole
+ * sequence reads as a clean voluntary shutdown with no cause anywhere in the
+ * log -- the title looks like it simply finished. The dialog type and dirName
+ * are the only place the actual complaint is named, so print them.
+ *
+ * Returning CELL_OK is correct: firmware returns success for "the dialog was
+ * shown". It does not mean the underlying content problem went away. */
+s32 cellGameContentErrorDialog(s32 type, s32 errNeedSizeKB, const char* dirName)
+{
+    /* dirName is a GUEST address; translate before use (same as DataCheck). */
+    uint32_t dir_ea = (uint32_t)(uintptr_t)dirName;
+    const char* dir = dir_ea ? (const char*)(vm_base + dir_ea) : "<null>";
+
+    const char* what;
+    switch (type) {
+        case 0:   what = "BROKEN_GAMEDATA";           break;
+        case 1:   what = "BROKEN_HDDGAME";            break;
+        case 2:   what = "NOSPACE";                   break;
+        case 100: what = "BROKEN_EXIT_GAMEDATA";      break;
+        case 101: what = "BROKEN_EXIT_HDDGAME";       break;
+        case 102: what = "NOSPACE_EXIT";              break;
+        default:  what = "<unknown type>";            break;
+    }
+
+    printf("[cellGame] *** ContentErrorDialog: %s (type=%d) dir='%s' needSizeKB=%d\n",
+           what, type, dir, errNeedSizeKB);
+    if (type >= 100)
+        printf("[cellGame] *** this is an EXIT dialog -- the title quits after this\n");
+    fflush(stdout);
+
+    return CELL_OK;
+}
