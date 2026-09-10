@@ -102,7 +102,7 @@ jobs:
         run: |
           ${{ matrix.compiler == 'clang' && 'clang' || 'gcc' }} \
             -std=gnu17 -I include -I runtime/spu \
-            -o /tmp/test_spu_helpers runtime/spu/tests/test_spu_helpers.c
+            -o /tmp/test_spu_helpers runtime/spu/tests/test_spu_helpers.c -lm
           /tmp/test_spu_helpers
 
 
@@ -271,3 +271,73 @@ jobs:
           cmake -S tests/fiber_switch -B build-fiber -G Ninja -DCMAKE_BUILD_TYPE=${{ matrix.build_type }}
           cmake --build build-fiber
           ./build-fiber/fiber_switch
+
+      # An SPU parked on a GETLLAR reservation has to be told when the PPU
+      # writes that line. Nothing else in the tree fails when that notify is
+      # missing -- the SPU just never wakes -- so it gets its own check.
+      - name: Run the PPU/SPU lock-line coherence tests
+        run: |
+          ${{ matrix.compiler == 'clang' && 'clang' || 'gcc' }} -std=gnu17 -I include -I runtime/spu \
+                -o /tmp/test_spu_coherency runtime/spu/tests/test_spu_coherency.c
+          /tmp/test_spu_coherency
+
+      # The other writer: an SPU. Five SPURS kernels share one management line,
+      # so a commit that does not break its peers' reservations lets two of them
+      # win the same compare-and-swap, and the queue is quietly wrong afterwards.
+      - name: Run the SPU-to-SPU lock-line coherence tests
+        run: |
+          ${{ matrix.compiler == 'clang' && 'clang' || 'gcc' }} -std=gnu17 -I include -I runtime/spu -I runtime/platform \
+            -o /tmp/test_spu_lockline_peer \
+            runtime/spu/tests/test_spu_lockline_peer.c \
+            runtime/spu/spu_drain.c runtime/spu/spu_lockstep.c \
+            runtime/spu/spu_coherency.c runtime/spu/spu_workload.c \
+            runtime/spu/spurs_policy.c runtime/spu/spurs_job.c \
+            runtime/spu/spu_tsp_weak.c runtime/spu/spu_vm_pagemap.c \
+            runtime/spu/spurs_policy_blob_weak.c runtime/spu/spu_interp.c \
+            -lpthread -lm
+          /tmp/test_spu_lockline_peer
+
+      # A thread group starting its threads on their image's LIFTED code. This
+      # is the path a real title needs and the one that used to be missing: the
+      # group's threads completed instantly with status 0, the group reported a
+      # clean exit, and the program the guest asked to run had simply not run.
+      # Nothing else in the tree fails when that happens, so it gets its own
+      # check. The real lv2 SPU-thread layer and the real SPU dispatcher are
+      # compiled in, and the two threads have to run concurrently on host
+      # threads of their own, with the image in their local stores, the entry
+      # point and image the registry says, and each thread's own arguments.
+      - name: Run the lifted SPU thread-group start test
+        run: |
+          ${{ matrix.compiler == 'clang' && 'clang' || 'gcc' }} -std=gnu17 -I include -I runtime/spu -I runtime/platform \
+            -o /tmp/test_spu_lifted_start \
+            runtime/spu/tests/test_spu_lifted_start.c \
+            runtime/spu/spu_channels.c runtime/spu/spu_drain.c \
+            runtime/spu/spu_lockstep.c runtime/spu/spu_coherency.c \
+            runtime/spu/spu_workload.c runtime/spu/spurs_policy.c \
+            runtime/spu/spurs_job.c runtime/spu/spu_tsp_weak.c \
+            runtime/spu/spu_vm_pagemap.c runtime/spu/spurs_policy_blob_weak.c \
+            runtime/spu/spu_interp.c runtime/spu/spu_lifted_thread.c \
+            runtime/syscalls/spu_fallback.c runtime/syscalls/sdk_version_weak.c \
+            -lpthread -lm
+          /tmp/test_spu_lifted_start
+
+      # The per-context MFC engine table, which the group above writes from
+      # every one of its threads at once. Two threads claiming the same slot
+      # share one engine's queue and tag mask, so one SPU's tag wait is
+      # satisfied by the other's transfer and nothing says so; slots that are
+      # never given back put every context past the eighth on one shared
+      # engine. Eight contexts claim on the same instant, thirty-two times
+      # over, and the check is that the same eight engines come back around,
+      # each one clean and holding only its own owner's state.
+      - name: Run the SPU MFC engine slot test
+        run: |
+          ${{ matrix.compiler == 'clang' && 'clang' || 'gcc' }} -std=gnu17 -I include -I runtime/spu -I runtime/platform \
+            -o /tmp/test_spu_mfc_slots \
+            runtime/spu/tests/test_spu_mfc_slots.c \
+            runtime/spu/spu_drain.c runtime/spu/spu_lockstep.c \
+            runtime/spu/spu_coherency.c runtime/spu/spu_workload.c \
+            runtime/spu/spurs_policy.c runtime/spu/spurs_job.c \
+            runtime/spu/spu_tsp_weak.c runtime/spu/spu_vm_pagemap.c \
+            runtime/spu/spurs_policy_blob_weak.c runtime/spu/spu_interp.c \
+            -lpthread -lm
+          /tmp/test_spu_mfc_slots

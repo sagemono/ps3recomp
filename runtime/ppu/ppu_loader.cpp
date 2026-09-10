@@ -645,6 +645,18 @@ void ps3_sampler_start(void) {}
 extern "C" uint8_t* vm_base;   /* defined by the host */
 extern "C" void ppu_log_host_chain(const char* tag);  /* fwd decl (defined below) */
 
+/* PPU <-> SPU lock-line coherence (runtime/spu/spu_coherency.c). A store by
+ * lifted guest code into a 128-byte line an SPU has reserved with GETLLAR has
+ * to serialize through the SPU lock-line lock, or it can land inside a PUTLLC's
+ * compare and be written straight back over; and it has to raise SPU_EVENT_LR,
+ * which is how an SPURS idle service parked in `rdch SPU_RdEventStat` finds out
+ * work was posted. spu_coh_is_reserved reads a global that stays zero until an
+ * SPU reserves its first line, so an ordinary store pays one branch. */
+extern "C" int  spu_coh_is_reserved(uint32_t addr);
+extern "C" void spu_lockline_lock(void);
+extern "C" void spu_lockline_unlock(void);
+extern "C" void spu_coh_notify_write(uint32_t addr);
+
 /* ---------------------------------------------------------------------------
  * lwarx/stwcx. cross-thread reservation invalidation.
  *
@@ -756,8 +768,18 @@ extern "C" int ppu_stwcx32(uint64_t ea, uint32_t expected, uint32_t val)
     volatile LONG* L = resv_slot(ea);
     resv_lock(L);
     if (self && self->reserve_addr != (uint32_t)ea) { resv_unlock(L); return 0; }   /* reservation lost */
+    /* On a line an SPU has reserved, take the lock-line lock around the CAS and
+     * notify: the same serialization the coherent stores use, so a PPU commit
+     * cannot land inside an SPU PUTLLC's compare/commit window (nor the
+     * reverse), and the reserving SPU gets its lost-reservation event. */
+    int coh = spu_coh_is_reserved((uint32_t)ea);
+    if (coh) spu_lockline_lock();
     int ok = __atomic_compare_exchange_n((uint32_t*)(vm_base + ea), &exp_raw, new_raw,
                                          0, __ATOMIC_SEQ_CST, __ATOMIC_SEQ_CST) ? 1 : 0;
+    if (coh) {
+        if (ok) spu_coh_notify_write((uint32_t)ea);
+        spu_lockline_unlock();
+    }
     if (ok) ppu_resv_break(ea);
     resv_unlock(L);
     return ok;
@@ -774,7 +796,13 @@ extern "C" int ppu_stdcx64(uint64_t ea, uint64_t expected, uint64_t val)
     volatile LONG* L = resv_slot(ea);   /* ea and ea+4 share a 16-byte-block slot */
     resv_lock(L);
     if (self && self->reserve_addr != (uint32_t)ea) { resv_unlock(L); return 0; }
+    int coh = spu_coh_is_reserved((uint32_t)ea);
+    if (coh) spu_lockline_lock();
     int ok = __atomic_compare_exchange_n((uint64_t*)(vm_base + ea), &exp_raw, new_raw, 0, __ATOMIC_SEQ_CST, __ATOMIC_SEQ_CST) ? 1 : 0;
+    if (coh) {
+        if (ok) spu_coh_notify_write((uint32_t)ea);
+        spu_lockline_unlock();
+    }
     if (ok) { ppu_resv_break(ea); ppu_resv_break(ea + 4); }  /* 8-byte store spans two words */
     resv_unlock(L);
     return ok;
@@ -1054,6 +1082,21 @@ static void pt_restore(uint32_t addr) { for (int i=0;i<g_pt_n;i++) if (g_pt_addr
  * write hook can name the virtual method that is running when it writes a value. */
 static PPU_THREAD_LOCAL uint32_t g_vcall_stk[128];
 static PPU_THREAD_LOCAL int      g_vcall_sp = 0;
+
+/* Every guest store commits through this: on a line no SPU has reserved (all of
+ * them, until SPU code runs) it is the plain memcpy it replaced. */
+#define VM_WRITE_COH(a, src, n)                                               \
+    do {                                                                      \
+        if (spu_coh_is_reserved((uint32_t)(a))) {                             \
+            spu_lockline_lock();                                              \
+            memcpy(vm_base + (uint32_t)(a), (src), (n));                      \
+            spu_coh_notify_write((uint32_t)(a));                              \
+            spu_lockline_unlock();                                            \
+        } else {                                                              \
+            memcpy(vm_base + (uint32_t)(a), (src), (n));                      \
+        }                                                                     \
+    } while (0)
+
 extern "C" {
 /* PPU_RWATCH=<hex>[,len] -- see the note in vm_read8. */
 static inline void ppu_rwatch_hit(uint32_t a, int width, void* ra)
@@ -1385,9 +1428,9 @@ void vm_write8 (uint64_t a, uint8_t  v) { barrier_watch_hit((uint32_t)a, v, 1, _
         if(nw==(uint32_t)g_pt_val && cur!=(uint32_t)g_pt_val) pt_record(wa);
         else if(((uint32_t)a&3)==0 && v!=0) pt_restore(wa); /* MSB byte set non-zero = restored */ } }
 #endif
-    vm_base[(uint32_t)a] = v; }
+    VM_WRITE_COH(a, &v, 1); }
 void vm_write16(uint64_t a, uint16_t v) { barrier_watch_hit((uint32_t)a, v, 2, __builtin_return_address(0)); if (vm_oob((uint32_t)a,2)) return;
-    v = __builtin_bswap16(v); memcpy(vm_base + (uint32_t)a, &v, 2); }
+    v = __builtin_bswap16(v); VM_WRITE_COH(a, &v, 2); }
 void vm_write32(uint64_t a, uint32_t v) { barrier_watch_hit((uint32_t)a, v, 4, __builtin_return_address(0)); if (vm_oob((uint32_t)a,4)) return;
 #ifdef _WIN32
     /* PT restore: a full-word store of a valid pointer (high byte set) to a
@@ -1395,7 +1438,7 @@ void vm_write32(uint64_t a, uint32_t v) { barrier_watch_hit((uint32_t)a, v, 4, _
     if (g_pt_val>=0 && (v>>24)!=0) pt_restore((uint32_t)a);
 #endif
     { uint32_t _v = v;
-      v = __builtin_bswap32(v); memcpy(vm_base + (uint32_t)a, &v, 4);
+      v = __builtin_bswap32(v); VM_WRITE_COH(a, &v, 4);
       /* Raw SPU problem state: run control, mailboxes and signal notification
        * have side effects. The plain store above still happens -- the registers
        * are guest memory and the PPU reads most of them straight back. */
@@ -1409,7 +1452,7 @@ void vm_write64(uint64_t a, uint64_t v) {
     barrier_watch_hit((uint32_t)a,     (uint32_t)(v >> 32), 4, __builtin_return_address(0));
     barrier_watch_hit((uint32_t)a + 4, (uint32_t)v,         4, __builtin_return_address(0));
     if (vm_oob((uint32_t)a,8)) return;
-    v = __builtin_bswap64(v); memcpy(vm_base + (uint32_t)a, &v, 8); }
+    v = __builtin_bswap64(v); VM_WRITE_COH(a, &v, 8); }
 }
 
 /* ---- malloc allocation tracker (PS3_ALLOCTAG) -------------------------------
