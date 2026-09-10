@@ -37,8 +37,45 @@ static char s_version[16]   = "01.00";
 static char s_system_ver[16] = "00.0000";
 static char s_app_ver[16]   = "01.00";
 
-/* Content info / usrdir paths */
+/* Content info / usrdir paths.
+ *
+ * This is the HOST directory the guest path /dev_hdd0/game maps to, and it has
+ * to be the SAME directory ppu_fs.cpp resolves that mount to. cellGame creates
+ * the game-data dir and hands the title a guest path; the title then opens files
+ * under that path through cellFs. If the two disagree the title writes its game
+ * data into one directory and reads it back from another, finds nothing, and
+ * reports the data as CORRUPT rather than as missing.
+ *
+ * LBP does exactly that: cellGameDataCheck saw ./gamedata/.../NPEA00241 -- left
+ * over from an earlier run's cellGameCreateGameData, and empty -- answered
+ * CELL_OK ("installed"), and the title then read /dev_hdd0/game/NPEA00241/USRDIR,
+ * which ppu_fs maps under the VFS root, got nothing, and put up
+ * cellGameContentErrorDialog(BROKEN_EXIT_GAMEDATA) and exited.
+ *
+ * The literal below is only the fallback for a host with no VFS configured;
+ * content_root() resolves the real one on first use. */
 static char s_content_path[CELL_GAME_PATH_MAX] = "./gamedata/dev_hdd0/game";
+static int  s_content_path_resolved = 0;
+
+/* Resolved the same way ppu_fs.cpp resolves /dev_hdd0: $PS3_HDD0_ROOT if set,
+ * else <ppu_vfs_root>/dev_hdd0. */
+extern const char* ppu_vfs_root;
+
+static const char* content_root(void)
+{
+    if (!s_content_path_resolved) {
+        s_content_path_resolved = 1;
+        const char* hdd0 = getenv("PS3_HDD0_ROOT");
+        if (hdd0 && *hdd0)
+            snprintf(s_content_path, sizeof s_content_path, "%s/game", hdd0);
+        else if (ppu_vfs_root && *ppu_vfs_root && strcmp(ppu_vfs_root, ".") != 0)
+            snprintf(s_content_path, sizeof s_content_path,
+                     "%s/dev_hdd0/game", ppu_vfs_root);
+        for (char* q = s_content_path; *q; q++) if (*q == 0x5C) *q = 0x2F;
+        printf("[cellGame] content root (host /dev_hdd0/game): %s\n", s_content_path);
+    }
+    return s_content_path;
+}
 static char s_content_info_path[CELL_GAME_PATH_MAX] = "";
 static char s_usrdir_path[CELL_GAME_PATH_MAX] = "";
 static char s_tmp_path[CELL_GAME_PATH_MAX] = "";
@@ -114,6 +151,7 @@ const char* cellGame_get_title(void)
 void cellGame_set_content_path(const char* path)
 {
     if (!path) return;
+    s_content_path_resolved = 1;   /* explicit override beats content_root() */
     strncpy(s_content_path, path, sizeof(s_content_path) - 1);
     s_content_path[sizeof(s_content_path) - 1] = '\0';
 }
@@ -220,11 +258,11 @@ s32 cellGameBootCheck(u32* type, u32* attributes, CellGameContentSize* size,
 
     /* Build paths based on title ID */
     snprintf(s_content_info_path, sizeof(s_content_info_path),
-             "%s/%s", s_content_path, s_title_id);
+             "%s/%s", content_root(), s_title_id);
     snprintf(s_usrdir_path, sizeof(s_usrdir_path),
-             "%s/%s/USRDIR", s_content_path, s_title_id);
+             "%s/%s/USRDIR", content_root(), s_title_id);
     snprintf(s_tmp_path, sizeof(s_tmp_path),
-             "%s/%s_TMP", s_content_path, s_title_id);
+             "%s/%s_TMP", content_root(), s_title_id);
 
 #ifdef _WIN32
     for (char* p = s_content_info_path; *p; p++) if (*p == '/') *p = '\\';
@@ -328,7 +366,7 @@ s32 cellGameDataCheck(u32 type, const char* dirName, CellGameContentSize* size)
     s_check_dir[sizeof(s_check_dir) - 1] = '\0';
 
     char path[CELL_GAME_PATH_MAX];
-    snprintf(path, sizeof(path), "%s/%s", s_content_path, check_dir);
+    snprintf(path, sizeof(path), "%s/%s", content_root(), check_dir);
 
     uint32_t size_ea = (uint32_t)(uintptr_t)size;
     if (size_ea) {
@@ -567,7 +605,7 @@ s32 cellGameCreateGameData(CellGameSetInitParams* init, char* tmp_contentInfoPat
     const char* create_dir = s_check_dir[0] ? s_check_dir : s_title_id;
 
     char path[CELL_GAME_PATH_MAX];
-    snprintf(path, sizeof(path), "%s/%s", s_content_path, create_dir);
+    snprintf(path, sizeof(path), "%s/%s", content_root(), create_dir);
 
     ensure_dirs(path);
 
