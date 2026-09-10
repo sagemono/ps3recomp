@@ -1516,7 +1516,12 @@ static int spu_smc_microstep(spu_context* ctx)
         if (op7 == 0x21)  { ctx->gpr[rt] = spu_splat_u32((w >> 7) & 0x3FFFF); pc += 4; continue; } /* ila */
         if (op11 == 0x201 || op11 == 0x001) { pc += 4; continue; }  /* nop/lnop */
         if (op11 == 0x002 || op11 == 0x003) { pc += 4; continue; }  /* sync/dsync */
-        if (op11 == 0x1AC || op9 == 0x008 || op9 == 0x009) { pc += 4; continue; } /* hbr hints */
+        /* hbr hints. hbr is the RR form (op11 0x1AC); hbra/hbrr are SEVEN-bit
+         * opcodes 0x08/0x09, so testing them against a 9-bit field never
+         * matched -- 0x1200048C (hbrr) reads as op9 0x024, fell through to
+         * UNKNOWN, and the microstep gave up. These are pure branch hints with
+         * no architectural effect, so stepping over them is the whole job. */
+        if (op11 == 0x1AC || op7 == 0x08 || op7 == 0x09) { pc += 4; continue; }
 
         { static int _n = 0;
           if (_n++ < 8)
