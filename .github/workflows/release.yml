@@ -99,7 +99,13 @@ jobs:
         shell: bash
         run: |
           set -e
-          VER="${GITHUB_REF_NAME}"
+          # On a tag this is "v0.12.0". On a workflow_dispatch dry run it is the
+          # BRANCH name, which may contain a slash -- "release/v0.12.0" made
+          # dist/${NAME} a nested directory, so the zip landed in dist/release/
+          # and the dist/*.zip upload glob found nothing. Every platform built and
+          # tested fine and the run still failed, which is the least useful way
+          # for a dry run to fail.
+          VER="${GITHUB_REF_NAME//\//-}"
           NAME="ps3recomp-${VER}-${{ matrix.platform }}"
           STAGE="dist/${NAME}"
 
