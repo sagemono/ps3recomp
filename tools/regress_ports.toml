@@ -81,6 +81,22 @@ port_build = """python "{toolkit}/tools/gen_hle_nids.py" --all --out src/gen/ppu
 # comparison would only cry wolf. twistedmetal and youdontknowjack have none
 # tracked yet; capturing one, next time either renders, is worth doing.
 
+# PS3_VFS_ROOT is the directory the guest's /dev_bdvd maps to, and the guest path
+# is appended WHOLE. A title asking for /dev_bdvd/PS3_GAME/USRDIR/rom/x under a
+# root of "vfs/PS3_GAME/USRDIR" resolves to
+# vfs/PS3_GAME/USRDIR/PS3_GAME/USRDIR/rom/x, which exists nowhere -- so the root
+# is the PARENT, "vfs".
+#
+# This registry had the doubled form for vf5 and simpsons, and it is why both
+# looked dead. VF5 spun on 686,996 failed opens and never left cellFsOpen, which
+# read as "stuck at 46 milestone keys"; Simpsons opened zero files and drew 9,391
+# groups of nothing, which read as "presents a flat frame". Neither was a
+# regression. With the root corrected VF5 executes 13,569 draw groups with zero
+# drops and shows the AM2 screen, and Simpsons shows its Fox Television intro.
+#
+# Their goldens were recorded under the broken root, so they describe titles that
+# could not load an asset. Re-record both.
+
 # --- showcase titles -------------------------------------------------------
 
 [[port]]
@@ -89,7 +105,7 @@ dir     = "../ps3games/vf5"
 cmd     = ["build-gate/vf5", "game/EBOOT.elf"]
 timeout = 60
 expect  = "timeout"
-env     = { PS3_VFS_ROOT = "vfs/PS3_GAME/USRDIR" }
+env     = { PS3_VFS_ROOT = "vfs" }
 render_env = { RSX_LIVE_DRAW = "1" }
 render_timeout = 150
 render_gold = "docs/now_loading.png"
@@ -130,7 +146,7 @@ dir     = "../ps3games/simpsons"
 cmd     = ["build-gate/simpsons", "vfs/PS3_GAME/USRDIR/EBOOT.elf"]
 timeout = 90
 expect  = "timeout"
-env     = { PS3_VFS_ROOT = "vfs/PS3_GAME/USRDIR" }
+env     = { PS3_VFS_ROOT = "vfs" }
 render_env = { RSX_LIVE_DRAW = "1" }
 render_gold = "docs/media/02-attract-canyon.png"
 
