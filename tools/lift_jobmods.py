@@ -41,7 +41,22 @@ CODE_END = {
     "jobmod_6943e26934ea_e0A20": 0xAE48,   # real code ends at br 0xA534 @ 0xAE40
 }
 
+# Extra function entries, in LS addresses, applied to every module that
+# contains them ($LBP_JOBMOD_EXTRA_FUNCS, comma-separated).
+#
+# All 46 modules stream into the SAME job-code buffer at LS 0x4000 and only one
+# is resident at a time, so an indirect-branch target seen at runtime is an LS
+# address without a module attached to it -- there is no way to know from the
+# BRANCH-TO-0 alone which image was resident. Offering the address to every
+# module is the honest response: spu_lifter only splits a function that
+# actually spans the address, so modules that do not contain it are unchanged.
+EXTRA_FUNCS = [a.strip() for a in
+               os.environ.get("LBP_JOBMOD_EXTRA_FUNCS", "").split(",") if a.strip()]
+
+
 def main():
+    if EXTRA_FUNCS:
+        print(f"  extra function entries: {', '.join(EXTRA_FUNCS)}")
     mods = sorted(glob.glob(os.path.join(JOBMODS, "*.bin")))
     os.makedirs(OUTDIR, exist_ok=True)
     manifest = []
@@ -66,6 +81,10 @@ def main():
                "--source-name", "spu_recomp.c", "--header-name", "spu_recomp.h"]
         if name in CODE_END:
             cmd += ["--code-end", hex(CODE_END[name])]
+        # Only offer addresses that fall inside THIS module's image.
+        inside = [a for a in EXTRA_FUNCS if BASE <= int(a, 0) < BASE + len(raw)]
+        if inside:
+            cmd += ["--extra-funcs", ",".join(inside)]
         r = subprocess.run(cmd, capture_output=True, text=True)
         if r.returncode != 0:
             print(f"  FAIL {name}\n{r.stderr}", file=sys.stderr)
