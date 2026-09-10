@@ -354,11 +354,11 @@ static int64_t sys_semaphore_wait_impl(ppu_context* ctx)
                 (unsigned)ctx->cia, (unsigned)ctx->lr);
       else if (!getenv("SEMTID") && ps3_log_verbose())
         fprintf(stderr, "[WAIT] semaphore_wait(sem=%u timeout=%llu)\n", sem_id, (unsigned long long)timeout_us); }
-    /* LBP_BREADCRUMB: every 500th wait, dump the per-tid indirect-call breadcrumb
+    /* PS3_BREADCRUMB: every 500th wait, dump the per-tid indirect-call breadcrumb
      * table. Fires reliably DURING the loader hang (respump spins sem16 waits),
      * so two consecutive [BC] lines reveal which worker's count is FROZEN = the
      * job it's stuck in, and its last indirect-call target = that callback. */
-    { static int bc=-2; if(bc==-2) bc=getenv("LBP_BREADCRUMB")?1:0;
+    { static int bc=-2; if(bc==-2) bc=getenv("PS3_BREADCRUMB")?1:0;
       if(bc){ static long w=0; if((++w % 500)==0){ extern void lbp_breadcrumb_dump(const char*); lbp_breadcrumb_dump("semwait"); } } }
     /* SEMCHAIN: dump the guest call-chain at the main thread's sem=7 poll (the
      * "loading done" wait) to locate its loop -- is it meant to re-post sem=3? */
@@ -537,7 +537,7 @@ int64_t sys_semaphore_post(ppu_context* ctx)
 #ifdef _WIN32
     EnterCriticalSection(&s->value_lock);
     if (s->value + count > s->max_value) {
-        if (getenv("RD_SEMTRACE")) { static int _n=0; if(_n++<6)
+        if (getenv("PS3_SEMTRACE")) { static int _n=0; if(_n++<6)
             fprintf(stderr, "[SEMTRACE] post OVERFLOW id=%u value=%d+%d > max=%d\n",
                     sem_id, s->value, count, s->max_value); }
         LeaveCriticalSection(&s->value_lock);

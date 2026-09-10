@@ -272,7 +272,7 @@ static inline int32_t spu_run_lifted_job_abi(spu_lifted_entry_fn entry,
         }
     }
     #undef _LB
-    if (taskset_ctx && getenv("LBP_TASKSET_TRACE")) {
+    if (taskset_ctx && getenv("SPURS_TASKSET_TRACE")) {
         fprintf(stderr, "[taskset] run image=%d r3=%08X %08X %08X %08X "
                 "r4=%08X %08X %08X %08X\n", image_id,
                 ctx.gpr[3]._u32[0], ctx.gpr[3]._u32[1], ctx.gpr[3]._u32[2], ctx.gpr[3]._u32[3],

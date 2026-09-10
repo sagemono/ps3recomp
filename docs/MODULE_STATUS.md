@@ -46,7 +46,7 @@ Status of HLE (High-Level Emulation) implementations for PS3 system modules in p
 | Module | Category | Status | Notes |
 |---|---|---|---|
 | cellGcmSys | RSX System | **Complete** | Command buffer control, local mem allocator, IO mapping with offset tables, flip handler/VBlank callbacks, tile/zcull config, report/label areas, timestamps, 27+ functions |
-| RSX Command Processor | GPU Commands | **Complete** | NV47xx FIFO parsing, state tracking (surfaces, viewport, scissor, blend, depth/stencil, cull, color mask, alpha test, 16 texture units, 16 vertex attribs, shader programs), draw arrays/indexed dispatch, rsx_backend callback interface. Null backend (Win32 window + clear color). Needs D3D12/Vulkan for actual rendering. |
+| RSX Command Processor | GPU Commands | **Complete** | NV47xx FIFO parsing, state tracking (surfaces, viewport, scissor, blend, depth/stencil, cull, color mask, alpha test, 16 texture units, 16 vertex attribs, shader programs), draw arrays/indexed dispatch, rsx_backend callback interface. **D3D12 backend renders real titles** — the guest's own NV4097 vertex and fragment programs, indexed draws, per-draw constants and textures, render-to-texture, MRT. A Metal backend covers macOS. Vulkan is still unwritten, and is what Linux and Android need. |
 | cellResc | Resolution | **Complete** | Init, display modes, buffer management, aspect ratio, interlace, flip/vblank handlers |
 | cellVideoOut | Video Output | **Complete** | Resolution config, device info, all PS3 resolution IDs, default 720p |
 

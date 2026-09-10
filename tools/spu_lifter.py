@@ -402,12 +402,25 @@ def compute_link_returns(insns, bounds) -> set:
             # move), the target was computed here -> a real indirect branch, not
             # a return. Scan stops at unconditional flow breaks (block boundary
             # -- see the twin guard in compute_bi_r0_jumps).
+            # Scan the real BASIC BLOCK, not the enclosing lifted function.
+            # The two are not the same: the lifter splits long straight-line
+            # runs into several functions that chain by fallthrough, and a scan
+            # bounded by `fn` stops at a split that is not a control-flow edge
+            # at all. pm_wwsjob's command-dispatch prologue is exactly that --
+            # one 0x7C-byte block cut into five functions (0x2DF8, 0x2E18,
+            # 0x2E38, 0x2E60, 0x2E78) -- so the `bi $r6` at 0x2E74 was examined
+            # against the four instructions of 0x2E60..0x2E78 alone. Its
+            # predecessor, the `br 0x2DF8` that loads r6 from the LS 0x15B0
+            # handler table, enters the block far above that window and was
+            # invisible, so the guard below could not fire and every job
+            # command handler was skipped -- the very case its comment cites.
             written = False
             block_start = s
-            for j in range(idx - 1, -1, -1):
-                w = fn[j]
+            gi = idx_of_all[insn.addr]
+            for j in range(gi - 1, -1, -1):
+                w = ordered[j]
                 if w.mnemonic in ("bi", "br", "bra", "iret", "stop", "stopd"):
-                    block_start = fn[j + 1].addr if j + 1 <= idx else s
+                    block_start = ordered[j + 1].addr
                     break
                 if (w.mnemonic not in _NO_RT_WRITE and _dest_reg(w) == rn
                         and not _is_identity_move(w)):
@@ -852,7 +865,7 @@ class SPULifter:
                 # + image save/restore (adopt-on-serve cannot leak upward).
                 return (f"{link} {{ int32_t _si = (int32_t)ctx->image_id; "
                         f"ctx->host_depth++; {self.prefix}spu_func_{tgt:08X}(ctx); "
-                        f"SPU_DRAIN(ctx); ctx->host_depth--; spu_img_restore(ctx, _si); }}")
+                        f"spu_drain_call(ctx, 0x{addr + 4:X}); ctx->host_depth--; spu_img_restore(ctx, _si); }}")
             return f"{link} /* TODO spu: brsl unresolved target */;"
         if mn in _COND_BR:
             tgt = self._branch_target(insn)
@@ -910,7 +923,7 @@ class SPULifter:
             return (f"{g(link_rt)} = spu_link(0x{addr + 4:X}); "
                     f"{{ int32_t _si = (int32_t)ctx->image_id; "
                     f"{_ied}ctx->pc = {g(tgt_reg)}._u32[0]; ctx->host_depth++; "
-                    f"spu_indirect_branch(ctx); SPU_DRAIN(ctx); "
+                    f"spu_indirect_branch(ctx); spu_drain_call(ctx, 0x{addr + 4:X}); "
                     f"ctx->host_depth--; spu_img_restore(ctx, _si); }}")
         # bisled: set link, branch to RA only if an external event is pending.
         if mn in ("bisled",):

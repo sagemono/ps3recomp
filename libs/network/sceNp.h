@@ -102,6 +102,11 @@ typedef struct SceNpMyLanguages {
 s32 sceNpInit(u32 poolSize, void* poolPtr);
 s32 sceNpTerm(void);
 
+#define SCE_NP_COMMUNITY_ERROR_ALREADY_INITIALIZED 0x8002a101
+#define SCE_NP_COMMUNITY_ERROR_NOT_INITIALIZED     0x8002a102
+s32 sceNpScoreInit(void);
+s32 sceNpScoreTerm(void);
+
 s32 sceNpGetNpId(s32 userId, SceNpId* npId);
 s32 sceNpGetOnlineId(s32 userId, SceNpOnlineId* onlineId);
 s32 sceNpGetOnlineName(s32 userId, SceNpOnlineName* onlineName);

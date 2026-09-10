@@ -18,6 +18,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <time.h>
 
 /* Capacity is a power of two so the probe can mask instead of divide. Sized well
  * above the largest real key set we have seen (VF5: 107 imports + ~60 syscalls;
@@ -46,6 +47,28 @@ static int       g_full_warned;       /* guarded by g_lock */
 static int       g_enabled = -1;
 static FILE*     g_out;               /* guarded by g_lock */
 static int       g_dumped;            /* guarded by g_lock */
+
+/* Counts are the one part of the record a killed process would otherwise lose,
+ * and "is it still drawing?" is exactly the question a blank or hung run asks.
+ * Almost every gated title is killed on a timeout (expect = "timeout"), so an
+ * atexit-only counts section was a section no port in the gate ever produced --
+ * which left regress.py's DROPPED check, the one meant to catch rendering
+ * stopping, with nothing at all to compare against.
+ *
+ * So the section is re-appended as the run goes and the reader takes the last
+ * value for each key, newest block wins. The trigger is elapsed TIME, not call
+ * count: a title that has stopped making progress -- the failure worth catching
+ * -- makes almost no calls, and Rubber Ducky at 4 fps never reached 65536 of
+ * them in a 60-second gate run at all. One-second granularity is plenty;
+ * nothing here needs to be precise, only recent.
+ * ponytail: time(NULL), not a monotonic clock. A wall-clock step just moves one
+ * checkpoint. */
+#define MS_CKPT_SECS  2
+#define MS_TICK       1024u   /* how often the hot path bothers to look at all */
+static unsigned  g_calls;             /* relaxed; only its low bits matter */
+static time_t    g_last_ckpt;         /* guarded by g_lock */
+static void ms_checkpoint(void);
+static void ms_maybe_counts_locked(void);
 
 /* ------------------------------------------------------------------------- */
 
@@ -116,6 +139,10 @@ static void ms_insert(const char* key, unsigned h)
                  * timeout still leaves everything it reached. */
                 fprintf(g_out, "%u\t%s\n", s->ord, s->key);
                 fflush(g_out);
+                /* A boot that dies early may never make MS_TICK calls; a new
+                 * key is rare and already on the locked I/O path, so let it
+                 * carry a checkpoint too. The time floor bounds the cost. */
+                ms_maybe_counts_locked();
             }
             ms_unlock();
             return;
@@ -139,6 +166,9 @@ void ps3_ms(const char* key)
 {
     unsigned h, i;
     if (!key || !*key || !ms_enabled()) return;
+
+    if ((__atomic_add_fetch(&g_calls, 1u, __ATOMIC_RELAXED) & (MS_TICK - 1)) == 0)
+        ms_checkpoint();
 
     h = ms_hash(key);
     for (i = 0; i < MS_CAP; i++) {
@@ -200,28 +230,58 @@ static const char* ms_bucket(unsigned n)
     return "100k+";
 }
 
+/* Caller holds g_lock and has checked g_out. */
+static void ms_write_counts_locked(void)
+{
+    /* One pass to index by ordinal, so the section reads in the same sequence
+     * as the stream above it and the two line up under a diff. The old
+     * ordinal-outer double loop was O(keys * MS_CAP), which was fine once at
+     * exit and is not fine on a repeating checkpoint. */
+    static unsigned short by_ord[MS_CAP + 1];
+    unsigned i, ord;
+
+    memset(by_ord, 0, sizeof by_ord);
+    for (i = 0; i < MS_CAP; i++)
+        if (g_slots[i].state == 2 && g_slots[i].ord <= MS_CAP)
+            by_ord[g_slots[i].ord] = (unsigned short)i;
+
+    fprintf(g_out, "# counts\n");
+    for (ord = 1; ord <= g_next_ord && ord <= MS_CAP; ord++) {
+        const ms_slot* s = &g_slots[by_ord[ord]];
+        if (s->ord == ord)
+            fprintf(g_out, "count\t%s\t%s\n", s->key, ms_bucket(s->hits));
+    }
+    fflush(g_out);
+}
+
+/* Periodic re-append, so a title killed in its frame loop still leaves counts.
+ * Caller holds g_lock. */
+static void ms_maybe_counts_locked(void)
+{
+    time_t now;
+    if (!g_out || g_dumped) return;
+    now = time(NULL);
+    if (g_last_ckpt && (long)(now - g_last_ckpt) < MS_CKPT_SECS) return;
+    g_last_ckpt = now;
+    ms_write_counts_locked();
+}
+
+static void ms_checkpoint(void)
+{
+    ms_lock();
+    ms_maybe_counts_locked();
+    ms_unlock();
+}
+
 void ps3_ms_dump(void)
 {
-    unsigned i, ord;
     if (ms_enabled() != 1) return;
 
     ms_lock();
     if (g_dumped || !g_out) { ms_unlock(); return; }
     g_dumped = 1;
 
-    fprintf(g_out, "# counts\n");
-    /* Ordinal order, so the counts section reads in the same sequence as the
-     * stream above it and the two line up under a diff. */
-    for (ord = 1; ord <= g_next_ord; ord++) {
-        for (i = 0; i < MS_CAP; i++) {
-            if (g_slots[i].state == 2 && g_slots[i].ord == ord) {
-                fprintf(g_out, "count\t%s\t%s\n", g_slots[i].key,
-                        ms_bucket(g_slots[i].hits));
-                break;
-            }
-        }
-    }
-
+    ms_write_counts_locked();
     fprintf(g_out, "# end\n");
     fflush(g_out);
     fclose(g_out);

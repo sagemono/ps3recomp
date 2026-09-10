@@ -174,6 +174,11 @@ s32 cellGameGetSizeKB(s32* sizeKB);
 
 s32 cellGameGetLocalWebContentPath(char* path);
 
+/* Show a system content-error message. type >= 100 means the title exits
+ * right after; the type and dirName are the only record of what it objected
+ * to, so the implementation logs them. */
+s32 cellGameContentErrorDialog(s32 type, s32 errNeedSizeKB, const char* dirName);
+
 #ifdef __cplusplus
 }
 #endif

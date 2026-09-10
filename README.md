@@ -39,12 +39,12 @@ The PlayStation 3 has over **3,000 titles** and some of the most beloved games e
 
 ## Platform support
 
-Every row is exercised by CI on every push. **Windows is green; Linux and macOS
-currently fail one check** — the PPU boot scaffold ratchet, which guards the
-unfinished POSIX port from sliding backwards and has been failing since before
-v0.11.0 ([#139](https://github.com/sp00nznet/ps3recomp/issues/139)). The rows
-below describe what those jobs actually do when they run, not what a green tick
-would imply.
+Every row is exercised by CI on every push, and **all three are green on
+`master`** — the PPU boot scaffold ratchet that had been red since before v0.11.0
+([#139](https://github.com/sp00nznet/ps3recomp/issues/139)) is at zero on all
+four toolchains. The rows below describe what those jobs actually do, not what a
+green tick would imply: building the runtime and passing the suites is not the
+same as running a game, and only one row claims that.
 
 | | Windows | macOS (arm64) | Linux |
 |---|---|---|---|
@@ -324,6 +324,7 @@ We've written extensive docs covering every aspect of the project. Whether you'r
 | **[Debug Console](docs/DEBUG_CONSOLE.md)** | Ask a title that is already running what it is doing, without a rebuild |
 | **[Runtime Diagnostics](docs/DIAGNOSTICS.md)** | Generated index of every diagnostic environment variable the runtime reads |
 | **[Prototype & Debug Builds](docs/PROTO_BUILDS.md)** | Why unencrypted, symbol-bearing prototype builds are the pipeline's ground truth |
+| **[Regression Gate](docs/REGRESSION_GATE.md)** | How five ports are checked against recorded goldens before a shared-runtime change lands — and how to tell a real red from the four kinds of measurement artefact |
 
 ## Getting Started
 
@@ -362,7 +363,7 @@ See [docs/GETTING_STARTED.md](docs/GETTING_STARTED.md) for the full walkthrough.
 
 | Game | Title ID | Status | Repo |
 |------|----------|--------|------|
-| **Rubber Ducky** / *Bigduck* (Sony, E3 2006 tech demo) | NPEA00003 | 8,530 functions detected, 13,484 emitted — **99.0% recall against the binary's own `.symtab`**. Ships as a *debug build with full symbols and DWARF*, which makes it the pipeline's ground truth: the `find_functions` recall fix and the phantom-function fix were both validated here. **Renders its own scene** — tiled walls, the mosaic tub, the towel, the chrome faucet and the duck. Not yet: the simulated water, blocked upstream of the renderer because the guest never populates its particle buffers. ~4–5 fps with the SPU fluid sim interpreted (~16 M SPU instructions/frame) | [sp00nznet/rubberducky](https://github.com/sp00nznet/rubberducky) |
+| **Rubber Ducky** / *Bigduck* (Sony, E3 2006 tech demo) | NPEA00003 | 8,530 functions detected, 13,484 emitted — **99.0% recall against the binary's own `.symtab`**. Ships as a *debug build with full symbols and DWARF*, which makes it the pipeline's ground truth: the `find_functions` recall fix and the phantom-function fix were both validated here. **Rendered its own scene** on 2026-08-26 — tiled walls, the mosaic tub, the towel, the chrome faucet and the duck ([docs/images/ducky.png](https://github.com/sp00nznet/rubberducky)) — and **does not today**: it issues zero draws against a current toolkit, with the port tree unchanged since before that date. Reconciling what was hand-rolled to get there is open work. Water was never visible, blocked upstream of the renderer because the guest never populates its particle buffers. ~4–5 fps with the SPU fluid sim interpreted (~16 M SPU instructions/frame).<br><br>**No longer a regression-gate subject**: it ships as a debug build with full symbols, which is exactly what makes it good ground truth for the lifter and a poor statement about whether a change is safe for retail titles | [sp00nznet/rubberducky](https://github.com/sp00nznet/rubberducky) |
 | **You Don't Know Jack** (Jellyvision/THQ) | BLUS30569 | 5,859 functions; **reaches gameplay** — boots, renders its Scaleform UI through the live D3D12 engine, navigates the menus under real pad input, loads an episode and puts answerable quiz questions on screen with scoring HUD. The episode load used to hang here: `CellSyncMutex` is a big-endian ticket lock (`m_freed`/`m_order`) and we stored it as a host-endian flag, so a mutex the SPU left *free* read as `0x01000100` and `TryLock` spun 160 M times (#118). Frontier: the USM/Sofdec decode never fills its video planes, so every movie-backed screen draws colour noise behind correct UI; and one `cellSpursEventFlagWait` on `0x005C1200` still needs the `SPURS_EF_FORCE=1` diagnostic to pass | [sp00nznet/youdontknowjack](https://github.com/sp00nznet/youdontknowjack) |
 | **flOw** (thatgamecompany) | NPUA80001 | 102,056 functions; **assets load and the app loop runs** — 2,816 draws, on the live engine shared with Twisted Metal, with the real decrypted `libsre.prx` loaded so `cellSpurs`/`cellSync` dispatch into recompiled Sony library code instead of stubs. The loader had been starving on missing meshes: the title asks for `P_manta_head6.PSSG` and siblings while the extracted `USRDIR` only carries the `_BA` variants, so one unresolvable entry left a load permanently pending and the title polled its queue forever — ~43 loader objects a second, 90 MB of heap, no progress | [sp00nznet/flow](https://github.com/sp00nznet/flow) |
 | **Tokyo Jungle** (Crispy's/SCE Japan) | NPUA80523 | 7,924 functions — *down* from an advertised 35,208, because `find_functions` had been counting intra-function basic blocks as separate functions; the correction was ground-truthed against Rubber Ducky's symbol table. **The first 3D title attempted, and it reaches its menus.** Boots end to end, runs the PSN data-install flow, brings up SPURS and its SPU job images, and renders: the Crispy's developer logo, the title screen, "PRESS ANY BUTTON", then the **main menu** (SURVIVAL / STORY / STATS / ARCHIVES) and the STORY mode select, RANKING, RESULTS and STATS screens — all at ~30 fps on D3D12, verified from presented-frame dumps rather than log counters. Getting here needed `sys_ppu_thread_once` (unimplemented, and it reported success without running the initialiser), a FIFO resync that was swallowing fences, and SPURS carrying the SPU's answer to a job query. Frontier: roughly half of all boots still lose an early audio-module registration to a race, and the title's save and movie paths each crashed on a guest address used as a host pointer until `cellSaveData` and `cellSail` were fixed to marshal through guest memory | [sp00nznet/tokyojungle](https://github.com/sp00nznet/tokyojungle) |
@@ -425,6 +426,77 @@ ps3recomp is built by a growing community. See **[CONTRIBUTORS.md](CONTRIBUTORS.
 for who did what — thank you, everyone.
 
 ## Changelog
+
+### v0.12.0 — *"One Tree"* (September 2026)
+
+*Nineteen open pull requests land on one branch. They came from the two people*
+*who have games actually running —* [@canersaka](https://github.com/canersaka)
+*with Yakuza: Dead Souls on macOS,* [@sagemono](https://github.com/sagemono)
+*with LittleBigPlanet — and the capability they represent existed for months*
+*without existing on `master`. Every one of caner's carried the same sentence:*
+*"Windows gameplay has not been rerun for this batch." Nobody could answer that,*
+*because nothing ran the ports together. That is what this release is.*
+
+**The nineteen**
+
+- [@canersaka](https://github.com/canersaka) (#152–#161): lifted SPU threads in
+  per-thread architectural contexts with lv2 copy semantics for thread arguments;
+  lv2 condition signals and static guest mutexes; cellAudio ring indices and
+  block tags; cellSysutil dialog completions from the guest callback poll;
+  sceNpTrophy first-use slots; cellGame content-volume space; cellSaveData
+  callback ABI; **RSX full FIFO driver methods, serialized callbacks and MRT
+  exports**; **macOS native host, Metal rendering and game runner**; sceNp local
+  score while offline.
+- [@sagemono](https://github.com/sagemono) (#162–#170): `cellGameContentErrorDialog`;
+  **cellGame content root** — the host directory `/dev_hdd0/game` maps to must be
+  the one `ppu_fs` resolves it to, or a title writes its save data to one
+  directory, reads it from another, and reports the data *corrupt* rather than
+  missing; `bi $rN` classified by basic block rather than by the lifted function,
+  because the lifter splits straight-line runs into functions that chain by
+  fallthrough and a split is not a control-flow edge; `hbra`/`hbrr` decoded as
+  the 7-bit opcodes they are; `--extra-funcs` passthrough for images entered by
+  an interrupt vector, which `--auto-functions` cannot see; EDAT license types 1
+  and 2 with the missing HMAC-SHA1 hash modes; list-DMA issue tracing.
+
+**What unifying them found**
+
+- **`cellGameSetParamString` was missing.** Sage's cellGame work makes Twisted
+  Metal reach `cellGameCreateGameData` for the first time, and that path calls a
+  function nothing implemented. Exactly the kind of gap a port owner cannot see
+  from inside their own title — which is the argument for unifying, stated as a
+  bug.
+- **One fix was found twice.** Sage's `hbra`/`hbrr` decode is byte-identical to
+  one already in the tree, reached independently from a different witness.
+
+**The gate had to be rebuilt before it could say anything**
+
+Four things it could not do, each discovered by it letting something through:
+
+- **Occurrence counts never reached a golden.** `ps3_ms_dump()` ran only at
+  `atexit()`, and every gated port is *killed* on its timeout — so `DROPPED`, the
+  rule whose own docstring reads *"Rendering stopping looks like this"*, had
+  nothing on either side to compare. Counts now checkpoint on a timer.
+- **It never measured pixels.** `--shots` runs each port in the configuration its
+  README documents and compares against the port's own reference screenshot.
+  Frames are judged by distinct colour count, never brightness: a cleared buffer
+  scores 100% non-black while showing nothing.
+- **`PS3_VFS_ROOT` was doubled for two ports.** The guest path is appended whole,
+  so a root of `vfs/PS3_GAME/USRDIR` produced
+  `vfs/PS3_GAME/USRDIR/PS3_GAME/USRDIR/…`. VF5 spun on **686,996 failed opens**
+  and looked like a dead showcase title; Simpsons opened zero files and drew
+  9,391 groups of nothing, which looked like a broken renderer. Both render.
+  Their goldens were invalid rather than stale and are re-recorded.
+- **A run straight after a build is not a measurement.** Cold page cache shifts
+  guest timing enough to flip race-sensitive titles; that run is now a discarded
+  warm-up, and a red is confirmed by a second run. Of five reds investigated in
+  one session, four were measurement artefacts and one was real — and the real
+  one came from an `UNRESOLVED` NID, a fact about the binary rather than about a
+  run.
+
+`rubberducky` leaves the gate: a Sony SDK sample recompiled from a debug fSELF
+with its symbol map exposed is excellent ground truth for the lifter and says
+nothing about whether a change is safe for retail titles. New:
+[docs/REGRESSION_GATE.md](docs/REGRESSION_GATE.md).
 
 ### v0.11.0 — *"Correctness Pass"* (September 2026)
 
@@ -568,7 +640,7 @@ Two crashes, same root cause, both reachable from ordinary gameplay:
 
 **Diagnostics**
 
-- **`LBP_WV`** watches PPU stores by value rather than by address (#108), the
+- **`PPU_WVAL`** watches PPU stores by value rather than by address (#108), the
   write watch **says when it stops printing** and lets the cap be raised (#111),
   the guard **prints the writer's live arguments** on every watched-line hit
   (#99), plus `PS3_HLE_ARGS`, `PS3_WAIT_OBJ` and a settable SPU atomic-trace cap.

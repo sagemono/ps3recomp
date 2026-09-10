@@ -17,7 +17,7 @@
  *              -> sink callbacks -> D3D12 PSO + draw into the flip surface
  *   flip method (0xE944) -> rsx_live_draw_present(buffer_id) -> Present()
  *
- * The whole path is gated by the YZ_RSX_DRAW env flag (see docs/FLAGS.md): when
+ * The whole path is gated by the RSX_DRAW env flag (see docs/FLAGS.md): when
  * unset/"0" the live draw engine is inert and the runtime keeps its existing
  * (null / clear-color) present, so this is a pure add-on with a kill switch.
  *
@@ -44,7 +44,7 @@ extern "C" {
 typedef const u8* (*rsx_live_guest_ptr_fn)(void* user, u32 location, u32 offset,
                                            u32 min_bytes);
 
-/* Whether the live draw path is enabled this run (reads YZ_RSX_DRAW once).
+/* Whether the live draw path is enabled this run (reads RSX_DRAW once).
  * Cheap; safe to call from the hot method hook. */
 int  rsx_live_draw_enabled(void);
 

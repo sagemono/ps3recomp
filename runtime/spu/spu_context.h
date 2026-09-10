@@ -33,8 +33,8 @@ extern "C" {
 
 /* ---------------------------------------------------------------------------
  * Reusable env-driven LS watchpoint (mini-debugger, no rebuild to retarget).
- *   LBP_SPU_WATCH=0x1BE80        watch one 16-byte LS line (reads + writes)
- *   LBP_SPU_WATCH=0x1BE80,0x927D80  up to 4 comma-separated addresses
+ *   SPU_LS_WATCH=0x1BE80        watch one 16-byte LS line (reads + writes)
+ *   SPU_LS_WATCH=0x1BE80,0x927D80  up to 4 comma-separated addresses
  * Fires from every SPU image's spu_ls_read128/write128. Cheap: one cached
  * compare on the hot path when disabled.
  * -----------------------------------------------------------------------*/
@@ -43,7 +43,7 @@ static inline unsigned* spu_ls_watch_list(int* out_n) {
     static int init = 0; static unsigned addr[SPU_WATCH_MAX]; static int n = 0;
     if (!init) {
         init = 1;
-        const char* e = getenv("LBP_SPU_WATCH");
+        const char* e = getenv("SPU_LS_WATCH");
         while (e && *e && n < SPU_WATCH_MAX) {
             addr[n++] = (unsigned)strtoul(e, (char**)&e, 0) & ~0xFu;
             while (*e == ',' || *e == ' ') e++;
@@ -266,6 +266,21 @@ typedef struct spu_context {
      * path recognizes a registered overlay's source EA and records which
      * overlay is now resident; dispatch retries a missed lookup against it. */
     int resident_ovl;
+    /* Independently streamed code buffers can coexist with the policy overlay.
+     * Each mapping records which translated image owns that local-store span. */
+    struct {
+        uint32_t lsa, size, source_ea;
+        int image_id;
+    } resident_code[4];
+
+    /* Resident SPURS-taskset TASK image id (0 = none) retires the id-0 wildcard
+     * for co-resident tasks. A taskset may hold several tasks that all lift at the
+     * SAME LS base (the shared task-code region at LS 0x3000+), so an LS address
+     * alone cannot say which one owns it. Outside the region it is cleared;
+     * on entry/resume it is resolved from the resident policy's TaskInfo ELF
+     * registration, or the legacy entry map if no ELF metadata is available.
+     * This also handles returns to internal PCs after scheduler calls. */
+    int      resident_task;
 
     /* --- SPU_DRAIN trampoline execution model (faithful-adopt, canersaka) ---
      * host_depth counts live lifted call frames (matched brsl/bisl). SPU_RET
@@ -282,7 +297,7 @@ typedef struct spu_context {
     uint32_t steps;
     int      module_img_a00;
 
-    /* SPU lockstep gate (spu_lockstep.c; env YZ_SPU_LOCKSTEP, default off).
+    /* SPU lockstep gate (spu_lockstep.c; env SPU_LOCKSTEP, default off).
      * quantum_ctr counts tick sites toward a token handoff; release_tb stamps
      * the guest-timebase moment this ctx last released the token. dec_start_tb
      * is the lockstep decrementer-freeze anchor (written only while armed). */
@@ -644,6 +659,8 @@ int  spu_tailret_enabled(void);
 void (*spu_take_interrupt(spu_context* ctx,
                           void (*tf)(spu_context*)))(spu_context*);
 
+/* Drain a translated call up to its explicit architectural return PC. */
+void spu_drain_call(spu_context* ctx, uint32_t return_pc);
 /* SPU_PCHIST=1: bucket SPU execution by the GPU module's own symbols.
  *
  * SPU_VRAMPC showed 3.7M VRAM writes from Host2Local_Body and ZERO from

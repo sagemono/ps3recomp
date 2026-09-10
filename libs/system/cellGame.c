@@ -11,6 +11,8 @@
 #include <string.h>
 #include <stdlib.h>
 #include <stdint.h>
+#include <limits.h>
+#include <errno.h>
 #include <sys/stat.h>
 
 #ifdef _WIN32
@@ -22,6 +24,7 @@
 #else
 #  include <unistd.h>
 #  include <sys/types.h>
+#  include <sys/statvfs.h>
 #  define HOST_MKDIR(p) mkdir(p, 0755)
 #  define HOST_STAT     stat
 #  define HOST_STAT_T   struct stat
@@ -37,8 +40,45 @@ static char s_version[16]   = "01.00";
 static char s_system_ver[16] = "00.0000";
 static char s_app_ver[16]   = "01.00";
 
-/* Content info / usrdir paths */
+/* Content info / usrdir paths.
+ *
+ * This is the HOST directory the guest path /dev_hdd0/game maps to, and it has
+ * to be the SAME directory ppu_fs.cpp resolves that mount to. cellGame creates
+ * the game-data dir and hands the title a guest path; the title then opens files
+ * under that path through cellFs. If the two disagree the title writes its game
+ * data into one directory and reads it back from another, finds nothing, and
+ * reports the data as CORRUPT rather than as missing.
+ *
+ * LBP does exactly that: cellGameDataCheck saw ./gamedata/.../NPEA00241 -- left
+ * over from an earlier run's cellGameCreateGameData, and empty -- answered
+ * CELL_OK ("installed"), and the title then read /dev_hdd0/game/NPEA00241/USRDIR,
+ * which ppu_fs maps under the VFS root, got nothing, and put up
+ * cellGameContentErrorDialog(BROKEN_EXIT_GAMEDATA) and exited.
+ *
+ * The literal below is only the fallback for a host with no VFS configured;
+ * content_root() resolves the real one on first use. */
 static char s_content_path[CELL_GAME_PATH_MAX] = "./gamedata/dev_hdd0/game";
+static int  s_content_path_resolved = 0;
+
+/* Resolved the same way ppu_fs.cpp resolves /dev_hdd0: $PS3_HDD0_ROOT if set,
+ * else <ppu_vfs_root>/dev_hdd0. */
+extern const char* ppu_vfs_root;
+
+static const char* content_root(void)
+{
+    if (!s_content_path_resolved) {
+        s_content_path_resolved = 1;
+        const char* hdd0 = getenv("PS3_HDD0_ROOT");
+        if (hdd0 && *hdd0)
+            snprintf(s_content_path, sizeof s_content_path, "%s/game", hdd0);
+        else if (ppu_vfs_root && *ppu_vfs_root && strcmp(ppu_vfs_root, ".") != 0)
+            snprintf(s_content_path, sizeof s_content_path,
+                     "%s/dev_hdd0/game", ppu_vfs_root);
+        for (char* q = s_content_path; *q; q++) if (*q == 0x5C) *q = 0x2F;
+        printf("[cellGame] content root (host /dev_hdd0/game): %s\n", s_content_path);
+    }
+    return s_content_path;
+}
 static char s_content_info_path[CELL_GAME_PATH_MAX] = "";
 static char s_usrdir_path[CELL_GAME_PATH_MAX] = "";
 static char s_tmp_path[CELL_GAME_PATH_MAX] = "";
@@ -85,6 +125,61 @@ static int dir_exists(const char* path)
 #endif
 }
 
+/* Content may not exist on first boot. Query its nearest existing ancestor
+ * so installation checks use the destination volume, without creating data. */
+static s32 content_free_kb(void)
+{
+    char path[CELL_GAME_PATH_MAX];
+    snprintf(path, sizeof(path), "%s", s_content_path[0] ? s_content_path : ".");
+    for (;;) {
+#ifdef _WIN32
+        ULARGE_INTEGER available;
+        if (GetDiskFreeSpaceExA(path, &available, NULL, NULL)) {
+            u64 kb = available.QuadPart / 1024;
+            return kb > INT32_MAX ? INT32_MAX : (s32)kb;
+        }
+        DWORD error = GetLastError();
+        if (error != ERROR_PATH_NOT_FOUND && error != ERROR_FILE_NOT_FOUND) break;
+#else
+        struct statvfs info;
+        if (statvfs(path, &info) == 0) {
+            u64 block = info.f_frsize ? info.f_frsize : info.f_bsize;
+            u64 count = info.f_bavail;
+            if (!block) return 0;
+            if (count > ((u64)INT32_MAX * 1024) / block) return INT32_MAX;
+            return (s32)((count * block) / 1024);
+        }
+        if (errno != ENOENT && errno != ENOTDIR) break;
+#endif
+        size_t len = strlen(path);
+#ifdef _WIN32
+        if (len == 3 && path[1] == ':' && (path[2] == '/' || path[2] == '\\')) break;
+#endif
+        while (len > 1 && (path[len - 1] == '/' || path[len - 1] == '\\'))
+            path[--len] = 0;
+        char* slash = strrchr(path, '/');
+#ifdef _WIN32
+        char* backslash = strrchr(path, '\\');
+        if (backslash && (!slash || backslash > slash)) slash = backslash;
+        if (slash == path + 2 && path[1] == ':') {
+            if (!slash[1]) break;
+            slash[1] = 0;
+            continue;
+        }
+#endif
+        if (!slash) {
+            if (strcmp(path, ".") == 0) break;
+            strcpy(path, ".");
+        } else if (slash == path) {
+            if (!slash[1]) break;
+            slash[1] = 0;
+        } else {
+            *slash = 0;
+        }
+    }
+    return 0;
+}
+
 /* ---------------------------------------------------------------------------
  * Configuration
  * -----------------------------------------------------------------------*/
@@ -114,6 +209,7 @@ const char* cellGame_get_title(void)
 void cellGame_set_content_path(const char* path)
 {
     if (!path) return;
+    s_content_path_resolved = 1;   /* explicit override beats content_root() */
     strncpy(s_content_path, path, sizeof(s_content_path) - 1);
     s_content_path[sizeof(s_content_path) - 1] = '\0';
 }
@@ -220,11 +316,11 @@ s32 cellGameBootCheck(u32* type, u32* attributes, CellGameContentSize* size,
 
     /* Build paths based on title ID */
     snprintf(s_content_info_path, sizeof(s_content_info_path),
-             "%s/%s", s_content_path, s_title_id);
+             "%s/%s", content_root(), s_title_id);
     snprintf(s_usrdir_path, sizeof(s_usrdir_path),
-             "%s/%s/USRDIR", s_content_path, s_title_id);
+             "%s/%s/USRDIR", content_root(), s_title_id);
     snprintf(s_tmp_path, sizeof(s_tmp_path),
-             "%s/%s_TMP", s_content_path, s_title_id);
+             "%s/%s_TMP", content_root(), s_title_id);
 
 #ifdef _WIN32
     for (char* p = s_content_info_path; *p; p++) if (*p == '/') *p = '\\';
@@ -245,7 +341,7 @@ s32 cellGameBootCheck(u32* type, u32* attributes, CellGameContentSize* size,
     if (attr_ea) vm_write32(attr_ea, 0);
 
     if (size_ea) {
-        vm_write32(size_ea + 0, 1024 * 1024);                 /* hddFreeSizeKB = 1 GB */
+        vm_write32(size_ea + 0, (u32)content_free_kb());
         vm_write32(size_ea + 4, (uint32_t)CELL_GAME_SIZEKB_NOTCALC);
         vm_write32(size_ea + 8, 0);                           /* sysSizeKB */
     }
@@ -328,11 +424,11 @@ s32 cellGameDataCheck(u32 type, const char* dirName, CellGameContentSize* size)
     s_check_dir[sizeof(s_check_dir) - 1] = '\0';
 
     char path[CELL_GAME_PATH_MAX];
-    snprintf(path, sizeof(path), "%s/%s", s_content_path, check_dir);
+    snprintf(path, sizeof(path), "%s/%s", content_root(), check_dir);
 
     uint32_t size_ea = (uint32_t)(uintptr_t)size;
     if (size_ea) {
-        vm_write32(size_ea + 0, 1024 * 1024);
+        vm_write32(size_ea + 0, (u32)content_free_kb());
         vm_write32(size_ea + 4, (uint32_t)CELL_GAME_SIZEKB_NOTCALC);
         vm_write32(size_ea + 8, 0);
     }
@@ -397,8 +493,8 @@ static s32 gamedata_stat_callback(const char* tag, u32 version, uint32_t dir_ea,
     memset(vm_base + cb, 0, (set + 0x20) - cb);
 
     /* CellGameDataStatGet (offsets per SDK, RPCS3-verified). */
-    vm_write32(get + 0x000, 40u * 1024u * 1024u - 256u);  /* hddFreeSizeKB (~40 GB) */
-    vm_write32(get + 0x004, is_new_data);                  /* isNewData */
+    vm_write32(get + 0x000, (u32)content_free_kb());
+    vm_write32(get + 0x004, is_new_data);                            /* isNewData = 0 (data exists) */
     snprintf((char*)(vm_base + get + 0x008), 96, "/dev_hdd0/game/%s", dir);          /* contentInfoPath */
     snprintf((char*)(vm_base + get + 0x427), 96, "/dev_hdd0/game/%s/USRDIR", dir);   /* gameDataPath */
     vm_write32(get + 0xB9C, 0xFFFFFFFFu);                  /* sizeKB = NOTCALC (-1) */
@@ -484,6 +580,46 @@ s32 cellHddGameCheck(u32 version, const char* dirName, u32 errDialog,
     return CELL_HDDGAME_RET_OK;
 }
 
+/* The write side of GetParamString: a title that has just created its game data
+ * fills PARAM.SFO in before writing it out. Twisted Metal only reaches this at
+ * all once cellGameCreateGameData works, which is why the NID sat unresolved
+ * until sage's cellGame work landed -- the regression gate caught it as
+ * UNRESOLVED 0xDAA5CD20 the first time the two were built together.
+ *
+ * Stores into the same statics GetParamString reads, so Create -> Set -> Get
+ * returns what the title wrote. ponytail: in memory only, not persisted to a
+ * PARAM.SFO on disk. Add that when a title is found that writes the data, exits,
+ * and expects to read it back on the next run. */
+s32 cellGameSetParamString(s32 id, const char* buf)
+{
+    /* `buf` is a GUEST address (raw r4), like GetParamString's -- a host
+     * dereference here faults. See [[guest-pointer-abi]]. */
+    uint32_t buf_ea = (uint32_t)(uintptr_t)buf;
+    if (!buf_ea)
+        return CELL_GAME_ERROR_PARAM;
+    const char* src = (const char*)(vm_base + buf_ea);
+
+    char*  dst;
+    size_t cap;
+    if (id >= CELL_GAME_PARAMID_TITLE && id <= CELL_GAME_PARAMID_TITLE_TURKISH) {
+        dst = s_title;      cap = sizeof s_title;      /* localised TITLE_## all land here */
+    } else {
+        switch (id) {
+        case CELL_GAME_PARAMID_TITLE_ID:       dst = s_title_id;   cap = sizeof s_title_id;   break;
+        case CELL_GAME_PARAMID_VERSION:        dst = s_version;    cap = sizeof s_version;    break;
+        case CELL_GAME_PARAMID_PS3_SYSTEM_VER: dst = s_system_ver; cap = sizeof s_system_ver; break;
+        case CELL_GAME_PARAMID_APP_VER:        dst = s_app_ver;    cap = sizeof s_app_ver;    break;
+        default:
+            printf("[cellGame] SetParamString: unknown param id %d (ignored)\n", id);
+            return CELL_OK;
+        }
+    }
+    strncpy(dst, src, cap - 1);
+    dst[cap - 1] = '\0';
+    printf("[cellGame] SetParamString(id=%d) = \"%s\"\n", id, dst);
+    return CELL_OK;
+}
+
 s32 cellGameGetParamInt(s32 id, s32* value)
 {
     printf("[cellGame] GetParamInt(id=%d)\n", id);
@@ -567,7 +703,7 @@ s32 cellGameCreateGameData(CellGameSetInitParams* init, char* tmp_contentInfoPat
     const char* create_dir = s_check_dir[0] ? s_check_dir : s_title_id;
 
     char path[CELL_GAME_PATH_MAX];
-    snprintf(path, sizeof(path), "%s/%s", s_content_path, create_dir);
+    snprintf(path, sizeof(path), "%s/%s", content_root(), create_dir);
 
     ensure_dirs(path);
 
@@ -576,19 +712,18 @@ s32 cellGameCreateGameData(CellGameSetInitParams* init, char* tmp_contentInfoPat
     snprintf(usrdir, sizeof(usrdir), "%s/USRDIR", path);
     ensure_dirs(usrdir);
 
+    /* Host paths are only for host filesystem access. Guest code feeds these
+     * results back to cellFs, which resolves PS3 virtual paths through VFS. */
     uint32_t cip_ea = (uint32_t)(uintptr_t)tmp_contentInfoPath;
     uint32_t usr_ea = (uint32_t)(uintptr_t)tmp_usrdirPath;
+    char guest_path[CELL_GAME_PATH_MAX];
     if (cip_ea) {
-        size_t len = strlen(path);
-        if (len > CELL_GAME_PATH_MAX - 1) len = CELL_GAME_PATH_MAX - 1;
-        memcpy(vm_base + cip_ea, path, len);
-        vm_base[cip_ea + len] = '\0';
+        snprintf(guest_path, sizeof(guest_path), "/dev_hdd0/game/%s", create_dir);
+        memcpy(vm_base + cip_ea, guest_path, strlen(guest_path) + 1);
     }
     if (usr_ea) {
-        size_t len = strlen(usrdir);
-        if (len > CELL_GAME_PATH_MAX - 1) len = CELL_GAME_PATH_MAX - 1;
-        memcpy(vm_base + usr_ea, usrdir, len);
-        vm_base[usr_ea + len] = '\0';
+        snprintf(guest_path, sizeof(guest_path), "/dev_hdd0/game/%s/USRDIR", create_dir);
+        memcpy(vm_base + usr_ea, guest_path, strlen(guest_path) + 1);
     }
 
     return CELL_OK;
@@ -632,6 +767,46 @@ s32 cellGameGetLocalWebContentPath(char* path)
 
     snprintf(GUEST_PTR(path, char*), CELL_GAME_PATH_MAX,
              "/dev_hdd0/game/%s/USRDIR/web", s_title_id);
+
+    return CELL_OK;
+}
+
+/* cellGameContentErrorDialog -- firmware puts a system error message on screen
+ * ("the game data is corrupted", "not enough space", ...) and, for the 1xx
+ * types, the title exits as soon as it returns.
+ *
+ * It has to exist even as a stub, and it has to SAY what it was asked to show.
+ * LBP calls this as the very last thing its "bringup" thread does before
+ * sys_ppu_thread_exit(0): the thread's result feeds main's startup gate, main
+ * sees a false, runs its teardown and calls exit(0). Unimplemented, the whole
+ * sequence reads as a clean voluntary shutdown with no cause anywhere in the
+ * log -- the title looks like it simply finished. The dialog type and dirName
+ * are the only place the actual complaint is named, so print them.
+ *
+ * Returning CELL_OK is correct: firmware returns success for "the dialog was
+ * shown". It does not mean the underlying content problem went away. */
+s32 cellGameContentErrorDialog(s32 type, s32 errNeedSizeKB, const char* dirName)
+{
+    /* dirName is a GUEST address; translate before use (same as DataCheck). */
+    uint32_t dir_ea = (uint32_t)(uintptr_t)dirName;
+    const char* dir = dir_ea ? (const char*)(vm_base + dir_ea) : "<null>";
+
+    const char* what;
+    switch (type) {
+        case 0:   what = "BROKEN_GAMEDATA";           break;
+        case 1:   what = "BROKEN_HDDGAME";            break;
+        case 2:   what = "NOSPACE";                   break;
+        case 100: what = "BROKEN_EXIT_GAMEDATA";      break;
+        case 101: what = "BROKEN_EXIT_HDDGAME";       break;
+        case 102: what = "NOSPACE_EXIT";              break;
+        default:  what = "<unknown type>";            break;
+    }
+
+    printf("[cellGame] *** ContentErrorDialog: %s (type=%d) dir='%s' needSizeKB=%d\n",
+           what, type, dir, errNeedSizeKB);
+    if (type >= 100)
+        printf("[cellGame] *** this is an EXIT dialog -- the title quits after this\n");
+    fflush(stdout);
 
     return CELL_OK;
 }

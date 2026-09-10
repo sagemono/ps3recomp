@@ -154,12 +154,12 @@ extern "C" { extern volatile long long g_gcm_ref_pub_count;    /* cellGcmSys.c *
              unsigned long long ppu_thread_cpu_us(unsigned tid);   /* sys_ppu_thread.c */
              unsigned ppu_thread_prof_pc(unsigned tid); }
 static volatile long g_lwm_tab_lock = 0;
-/* LBP_LWM_TRACE=1: reconstruct the lwmutex lock-convoy that stalls LBP's loader.
+/* PS3_LWMUTEX_TRACE=1: reconstruct the lwmutex lock-convoy that stalls LBP's loader.
  * Records, per mutex, the acquiring tid + a QPC microsecond timestamp; on a
  * contended block it logs who holds it and for how long; on unlock it flags a
  * long hold. The leaf holder (the one blocked on a non-lwmutex wait) is the
  * convoy root. Default OFF. */
-static int lwm_trace(void){ static int v=-1; if(v<0){const char*e=getenv("LBP_LWM_TRACE"); v=e?1:0;} return v; }
+static int lwm_trace(void){ static int v=-1; if(v<0){const char*e=getenv("PS3_LWMUTEX_TRACE"); v=e?1:0;} return v; }
 static long long lwm_now_us(void){
 #ifdef _WIN32
     static LARGE_INTEGER freq={0}; if(!freq.QuadPart) QueryPerformanceFrequency(&freq);
@@ -417,7 +417,7 @@ static void sys_mmapper_allocate_memory(ppu_context* ctx)
     uint32_t size       = (uint32_t)ctx->gpr[3];
     uint32_t mem_id_ptr = (uint32_t)ctx->gpr[5];
     uint32_t id         = mmapper_new_id(size);
-    if (getenv("FLOW_MEMTRACE"))
+    if (getenv("PS3_MEMTRACE"))
         fprintf(stderr, "[mmapper] allocate_memory(size=0x%X flags=0x%llX id_ptr=0x%X) -> id 0x%X\n",
                 size, (unsigned long long)ctx->gpr[4], mem_id_ptr, id);
     if (mem_id_ptr) vm_write32(mem_id_ptr, id);
@@ -431,7 +431,7 @@ static void sys_mmapper_allocate_memory_from_container(ppu_context* ctx)
     uint32_t size = (uint32_t)ctx->gpr[3];
     uint32_t mem_id_ptr = (uint32_t)ctx->gpr[6];
     uint32_t id = mmapper_new_id(size);
-    if (getenv("FLOW_MEMTRACE"))
+    if (getenv("PS3_MEMTRACE"))
         fprintf(stderr, "[mmapper] alloc_from_container(size=0x%X cid=0x%X flags=0x%llX id_ptr=0x%X) -> id 0x%X\n",
                 size, (uint32_t)ctx->gpr[4], (unsigned long long)ctx->gpr[5], mem_id_ptr, id);
     if (mem_id_ptr) vm_write32(mem_id_ptr, id);

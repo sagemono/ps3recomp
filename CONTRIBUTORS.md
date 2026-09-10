@@ -147,6 +147,25 @@ same engine then needed the FIFO subchannel treated as a binding slot rather
 than an engine selector, HDR (`F_W16Z16Y16X16`) colour surfaces, and
 fragment-output NaN guards — all on top of his engine, not in place of it.
 
+
+*The 2026-09 batch (#152-#161), from getting Yakuza: Dead Souls running on a Mac*
+- **Lifted SPU threads** — a thread runs its own lifted image in its own
+  architectural context, with lv2 copy semantics for the four thread arguments
+  (games reuse one guest args block across a group and rewrite it between calls,
+  so reading it lazily hands every thread the previous thread's values) (#152).
+- **lv2 condition signals retained; static guest mutexes registered** (#153).
+- **cellAudio** — guest ring indices wrapped, block tags and timestamps
+  provided (#154).
+- **cellSysutil** — dialog completions delivered from the guest callback poll
+  (#155).
+- **sceNpTrophy** first-use slots and registration completion (#156);
+  **cellGame** content-volume space and guest paths (#157); **cellSaveData**
+  callback ABI and guest file-request execution (#158).
+- **RSX: full FIFO driver methods, serialized callbacks and MRT exports** (#159).
+- **macOS native host, Metal rendering and game runner** (#160) — the second
+  platform backend, and the reason aarch64 is proven rather than assumed.
+- **sceNp** local score service initialized while offline (#161).
+
 ### Jonathan Del Corpo — [@JonathanDC64](https://github.com/JonathanDC64)
 Correctness and robustness fixes distilled from a **Demon's Souls** port that
 stress-tested the toolkit against a ~106k-function title. The title-agnostic wins
@@ -263,6 +282,48 @@ runtime that [@sp00nznet](https://github.com/sp00nznet) and
 that work stands on its own (the `caner/ppu-*`, `c6*/c7*`, and the core SPU
 subsystem commits); the faithful-adoption branch is a parallel re-derivation, and
 credit for the underlying design belongs to them.
+
+
+*The 2026-09 cellGame batch, from LittleBigPlanet*
+- **cellGame content root** — the host directory `/dev_hdd0/game` maps to has to
+  be the same one `ppu_fs.cpp` resolves that mount to. When the two disagreed,
+  a title wrote its game data into one directory and read it back from another,
+  found nothing, and reported the data as **corrupt** rather than missing (#163).
+- **`cellGameContentErrorDialog`** implemented (#162), and the per-build LBP SPU
+  sources made optional (#164).
+
+This batch also surfaced a gap nobody could have found alone: with it, **Twisted
+Metal reaches `cellGameCreateGameData` for the first time**, and that path calls
+`cellGameSetParamString`, which nothing implemented. Exactly the kind of thing a
+port owner cannot see from inside their own title.
+
+*The 2026-09-10 SPU lifter and EDAT batch*
+- **`bi $rN` classified by basic block, not by function** — `compute_link_returns`
+  bounded both backward scans by the enclosing lifted *function*, but the lifter
+  splits long straight-line runs into several functions that chain by
+  fallthrough, and a split is not a control-flow edge. A scan that stops there
+  stops mid-block, having seen only part of it, which defeats the predecessor
+  refinement the function already does (#169).
+- **`hbra`/`hbrr` decoded as the 7-bit opcodes they are** — only `hbr` is the
+  11-bit RR form; testing the other two against a 9-bit field can never match, so
+  a stub carrying a branch hint decoded to UNKNOWN and the SPU fell into
+  branch-to-0. Found independently of the identical fix already in the tree,
+  from a different witness (#166).
+- **`--extra-funcs` passthrough** in `build_spu_workloads` (#165) and
+  `lift_jobmods` (#170). An SPU address reached only by an indirect branch is
+  invisible to `--auto-functions`; an image entered by an *interrupt vector* has
+  no branch path from its entry point at all. The job modules need it most —
+  they all stream into the same LS 0x4000 buffer with one resident at a time, so
+  a BRANCH-TO-0 names an address with no module attached to it.
+- **EDAT license types 1 and 2, and the 0x08/0x10/0x20 flags** — `edat.c` handled
+  only self-keyed SDATs and license-type-3 "free" EDATs with one of four public
+  klicensees, refusing everything else up front. Adds the missing HMAC-SHA1 hash
+  modes 0x01 and 0x04 alongside the AES-CMAC mode 0x02 that was there (#167).
+- **List-DMA issue tracing** — a list DMA takes its own path through the MFC and
+  never reaches `mfc_do_transfer`, so the always-on per-transfer trace never saw
+  one. Two lines that turn a run where everything downstream depends on a single
+  invisible list command into something you can read: the destination LSA at
+  issue, and what a stall handler leaves behind (#168).
 
 ### Paulo Adriano Alves — [@pauloadrianoalves](https://github.com/pauloadrianoalves)
 Initial **PPU boot path** and supporting tooling (PR #3, partially incorporated

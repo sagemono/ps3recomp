@@ -39,7 +39,13 @@ static uint64_t ls_now_ns(void)
 #else
 #  include <pthread.h>
 #  include <time.h>
-#  define LS_RELAX() ((void)0)
+#  if defined(__x86_64__) || defined(__i386__)
+#    define LS_RELAX() __builtin_ia32_pause()
+#  elif defined(__aarch64__)
+#    define LS_RELAX() __asm__ __volatile__("yield" ::: "memory")
+#  else
+#    define LS_RELAX() ((void)0)
+#  endif
 static pthread_mutex_t s_ls_lock = PTHREAD_MUTEX_INITIALIZER;
 static pthread_cond_t  s_ls_cv   = PTHREAD_COND_INITIALIZER;
 #  define LS_LOCK()       pthread_mutex_lock(&s_ls_lock)
@@ -79,14 +85,14 @@ static volatile int s_init_complete = 0;
 
 static void ls_arm_now(void)
 {
-    const char* e = getenv("YZ_SPU_LOCKSTEP");
+    const char* e = getenv("SPU_LOCKSTEP");
     int on = (e && *e && *e != '0') ? 1 : 0;
     if (on) {
-        const char* qs = getenv("YZ_LOCKSTEP_QUANTUM");
+        const char* qs = getenv("SPU_LOCKSTEP_QUANTUM");
         uint64_t q = (qs && *qs) ? strtoull(qs, NULL, 10) : YZ_LOCKSTEP_DEFAULT_QUANTUM;
         if (q < 1) q = 1;
         s_quantum = q;
-        fprintf(stderr, "[lockstep] ARMED quantum=%llu (YZ_SPU_LOCKSTEP=1; unset to disable)\n",
+        fprintf(stderr, "[lockstep] ARMED quantum=%llu (SPU_LOCKSTEP=1; unset to disable)\n",
                 (unsigned long long)q);
         fflush(stderr);
     }

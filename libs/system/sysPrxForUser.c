@@ -22,6 +22,7 @@
 #include <pthread.h>
 #include <unistd.h>
 #include <sched.h>
+#include <errno.h>   /* ETIMEDOUT: its value differs per host, so never inline it */
 #endif
 
 /* ---------------------------------------------------------------------------
@@ -155,8 +156,21 @@ static u32 s_next_heap_id = 1;
  * Process management
  * -----------------------------------------------------------------------*/
 
+/* The status the guest asked to exit with, published before the host exit()
+ * runs. exit() gives its argument to _exit and to nothing else -- an atexit
+ * handler cannot read it -- so without this the only place a guest's chosen
+ * status is visible is the process's own exit code. That forces a harness to
+ * exit with the guest's status rather than with its own verdict about the run,
+ * and makes "the guest asked for 0" indistinguishable from "the harness fell
+ * through and returned 0". Written before any of the diagnostic detours below,
+ * so a parked or held exit still records what was asked for. */
+int g_sys_process_exit_called = 0;
+s32 g_sys_process_exit_code   = 0;
+
 void sys_process_exit(s32 exitcode)
 {
+    g_sys_process_exit_code   = exitcode;
+    g_sys_process_exit_called = 1;
     printf("[sysPrxForUser] sys_process_exit(code=%d)\n", exitcode);
 #ifdef _WIN32
     /* The RSX present thread runs at ~60Hz; a title that finishes in a few ms
@@ -267,6 +281,30 @@ s32 _sys_printf(const char* fmt, ...)
     va_end(ap);
     printf("[PS3] %s", buf);
     return ret;
+}
+
+/* The abort half of the Cell SDK's internal assertion macro. Every one of its
+ * 80 call sites in libsre is the same two-instruction pair: _sys_printf with
+ * the "PS3 SDK INTERNAL ASSERTION FAILURE" format, then this with a short
+ * message -- "Aborted.", or "The SPURS is aborted." when SPURS is the one
+ * giving up. One argument, a guest pointer to that message.
+ *
+ * It is not noreturn. The compiler emits an ordinary return sequence after
+ * each call, because on retail hardware with no debugger attached the trap is
+ * taken, ignored, and the caller unwinds itself -- which is why a title whose
+ * SPURS has aborted goes on to walk its own call chain, print it, and exit the
+ * thread rather than stopping here.
+ *
+ * So printing the message and returning is the faithful behaviour, not a stub
+ * standing in for something better. What it changes is that the abort is
+ * legible: without it the call is an unresolved NID answering CELL_ENOSYS in a
+ * trace, three lines after the assertion text that explains it, with nothing
+ * connecting the two. */
+s32 _sys_trap_process(const char* msg)
+{
+    const char* m = (const char*)yz_g2h(msg);
+    printf("[PS3] %s", m ? m : "(trap)\n");
+    return CELL_OK;
 }
 
 s32 _sys_sprintf(char* buf, const char* fmt, ...)
@@ -380,26 +418,18 @@ extern u8* vm_base;  /* for guest-address diagnostics in the boot log */
  * translation, so the order no longer decides whether it crashes. */
 #define YZ_XLAT(p, T) ((p) = (p) ? (T)(void*)(vm_base + (u32)(uintptr_t)(p)) : (T)0)
 
-s32 sys_lwmutex_create(sys_lwmutex_t_hle* lwmutex, const sys_lwmutex_attribute_t* attr)
+/* Allocation is shared by explicit creation and the guest's static
+ * initializer path. The caller holds s_slot_lock across the guest slot write. */
+static s32 lwmutex_register_locked(sys_lwmutex_t_hle* lwmutex,
+                                  const sys_lwmutex_attribute_t* attr)
 {
-    YZ_XLAT(lwmutex, sys_lwmutex_t_hle*);
-    YZ_XLAT(attr, const sys_lwmutex_attribute_t*);
-    printf("[sysPrxForUser] sys_lwmutex_create(name='%.8s', guest=0x%08X)\n",
-           attr ? attr->name : "???", YZ_GUEST_ADDR(lwmutex));
-    { extern char* getenv(const char*); static int _lt=-1; if(_lt<0)_lt=getenv("FLOW_LWMTRACE")?1:0;
-      if(_lt){ extern unsigned int ppu_active_lr(void); printf("[LWMTRACE] create guest=0x%08X caller_lr=0x%08X\n", YZ_GUEST_ADDR(lwmutex), ppu_active_lr()); } }
-
-    if (!lwmutex)
-        return CELL_EFAULT;
-
-    slot_lock();
     u32 idx = s_lwmutex_next;
     for (u32 i = 0; i < MAX_LWMUTEX; i++) {
         u32 slot = (idx + i) % MAX_LWMUTEX;
         if (!s_lwmutex[slot].in_use) {
             LwMutexSlot* m = &s_lwmutex[slot];
             m->in_use = 1;
-            m->recursive = (attr && (attr->recursive & SYS_SYNC_RECURSIVE)) ? 1 : 0;
+            m->recursive = (attr && (ps3_bswap32(attr->recursive) & SYS_SYNC_RECURSIVE)) ? 1 : 0;
             if (attr)
                 memcpy(m->name, attr->name, 8);
 
@@ -417,11 +447,9 @@ s32 sys_lwmutex_create(sys_lwmutex_t_hle* lwmutex, const sys_lwmutex_attribute_t
             memset(lwmutex, 0, sizeof(*lwmutex));
             lwmutex->sleep_queue = slot + 1; /* 1-based ID */
             s_lwmutex_next = (slot + 1) % MAX_LWMUTEX;
-            slot_unlock();
             return CELL_OK;
         }
     }
-    slot_unlock();
     return CELL_EAGAIN;
 }
 
@@ -465,11 +493,41 @@ s32 sys_ppu_thread_once(u32 once_ctrl_ea, u32 init_opd)
     return CELL_OK;
 }
 
+s32 sys_lwmutex_create(sys_lwmutex_t_hle* lwmutex, const sys_lwmutex_attribute_t* attr)
+{
+    YZ_XLAT(lwmutex, sys_lwmutex_t_hle*);
+    YZ_XLAT(attr, const sys_lwmutex_attribute_t*);
+    if (!lwmutex) return CELL_EFAULT;
+    slot_lock();
+    s32 rc = lwmutex_register_locked(lwmutex, attr);
+    slot_unlock();
+    return rc;
+}
+
+/* Match the existing game runtime's static-initializer support. Such a
+ * mutex has flags in attribute but has never called the create import.
+ * Serialize the first use so competing threads share one host mutex. */
+static s32 lwmutex_ensure_registered(sys_lwmutex_t_hle* lwmutex)
+{
+    slot_lock();
+    s32 rc = CELL_OK;
+    if (!lwmutex->sleep_queue) {
+        sys_lwmutex_attribute_t attr = {0};
+        attr.recursive = lwmutex->attribute;
+        rc = lwmutex_register_locked(lwmutex, &attr);
+    }
+    slot_unlock();
+    return rc;
+}
+
 s32 sys_lwmutex_lock(sys_lwmutex_t_hle* lwmutex, u64 timeout)
 {
     (void)timeout;
     YZ_XLAT(lwmutex, sys_lwmutex_t_hle*);
     if (!lwmutex) return CELL_EFAULT;
+
+    s32 rc = lwmutex_ensure_registered(lwmutex);
+    if (rc != CELL_OK) return rc;
 
     u32 slot = lwmutex->sleep_queue - 1;
     if (slot >= MAX_LWMUTEX || !s_lwmutex[slot].in_use) {
@@ -510,6 +568,9 @@ s32 sys_lwmutex_trylock(sys_lwmutex_t_hle* lwmutex)
 {
     YZ_XLAT(lwmutex, sys_lwmutex_t_hle*);
     if (!lwmutex) return CELL_EFAULT;
+
+    s32 rc = lwmutex_ensure_registered(lwmutex);
+    if (rc != CELL_OK) return rc;
 
     u32 slot = lwmutex->sleep_queue - 1;
     if (slot >= MAX_LWMUTEX || !s_lwmutex[slot].in_use)
@@ -703,7 +764,11 @@ s32 sys_lwcond_wait(sys_lwcond_t_hle* lwcond, u64 timeout)
         }
         int rc = pthread_cond_timedwait(&s_lwcond[cslot].cv,
                                          &s_lwmutex[mslot].mtx, &ts);
-        if (rc == 110 /* ETIMEDOUT */)
+        /* ETIMEDOUT, not the 110 that was written here: 110 is Linux's value
+         * and Darwin's is 60, so on macOS a real timeout fell through and the
+         * guest was told CELL_OK -- that its condition had been signalled. A
+         * lwcond poll loop then proceeds on state nobody produced. */
+        if (rc == ETIMEDOUT)
             return CELL_ETIMEDOUT;
     }
 #endif
@@ -988,9 +1053,32 @@ s32 sys_prx_get_module_id_by_name(const char* name, u64 flags, u32* id)
     printf("[sysPrxForUser] sys_prx_get_module_id_by_name('%s')\n",
            hname ? hname : "(null)");
 
-    if (!hid) return CELL_EFAULT;
-    *hid = 0; /* fake module ID */
-    return CELL_OK;
+    /* A null id is not an error. The caller that only wants to know whether a
+     * module is present passes one -- libsre's tuner probe does exactly that,
+     * with r5 = 0 -- and answering CELL_EFAULT tells it the question was
+     * malformed rather than that the module is absent. Report the lookup
+     * result either way and write the id only if there is somewhere to put it.
+     *
+     * No module is loaded by name here, so the honest answer is that the name
+     * is not known: CELL_PRX_ERROR_UNKNOWN_MODULE. This used to write a module
+     * id of 0 and report CELL_OK, which is worse than it looks -- a caller asks
+     * this question precisely to find out whether some optional module is
+     * present, and success hands it an id that indexes nothing.
+     *
+     * libsre is the caller that shows the cost. _cellSpursIsLaunchedFromTuner
+     * asks whether the SPURS profiler is loaded; told yes, it asserts on the
+     * id, reports the title as launched from the tuner, and runs tuner and
+     * trace setup that then fails with CELL_SPURS_CORE_ERROR_STAT -- and the
+     * SPURS task workload never attaches, so a title waiting on its first
+     * workload waits forever. The failure is four layers from the lie and says
+     * nothing about it; runtime/ppu/ppu_hle.cpp has carried an env-gated
+     * override returning exactly this code, with a comment spelling out that
+     * chain, since long before the reason was traced back to here.
+     *
+     * A runtime that grows real load-by-name has a module table to answer
+     * from, and this becomes a lookup miss rather than a constant. */
+    if (hid) *hid = 0;
+    return (s32)0x8001112E;   /* CELL_PRX_ERROR_UNKNOWN_MODULE */
 }
 
 /* ---------------------------------------------------------------------------

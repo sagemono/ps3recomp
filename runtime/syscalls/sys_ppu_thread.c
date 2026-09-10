@@ -23,6 +23,15 @@ static PPU_TLS int     s_exit_armed = 0;
 #include <string.h>
 #include <stdio.h>
 #include <stdlib.h>   /* getenv (else return value truncated to int on x64) */
+#ifndef _WIN32
+#include <errno.h>
+#endif
+
+/* Host stack reserved per guest thread, for pthread_attr_setstacksize. The
+ * same 256 MB the Win32 branch hands _beginthreadex a few hundred lines
+ * down; keep the two in step so a stack-depth bug reproduces on both. */
+#define PPU_HOST_STACK_BYTES  (256u * 1024u * 1024u)
+
 #ifdef _WIN32
 #include <process.h>   /* _beginthreadex: CRT-aware thread creation (raw CreateThread
                         * leaves per-thread CRT state uninit -> buffered fread() silently
@@ -178,7 +187,7 @@ static void* ppu_host_thread_proc(void* param)
 }
 
 /* ---------------------------------------------------------------------------
-/* YDKJ_THREADGATE: PS3 priority scheduling — a newly created same/lower-priority
+/* PPU_THREADGATE: PS3 priority scheduling — a newly created same/lower-priority
  * thread does NOT run until the creating thread blocks. Our HLE spawns host threads
  * immediately, so a worker (GThread entry=0x5353C0) can read its job object's
  * [arg+0x10] owner link BEFORE the main thread finishes linking it -> null -> spin.
@@ -402,7 +411,7 @@ int64_t sys_ppu_thread_create(ppu_context* ctx)
      * this=[arg+0x8], vtable=[arg+0xC], method=[vtable+0]. If this(+0x8) is null
      * the worker dispatches its job on a null object -> construction never runs. */
     { extern uint8_t* vm_base; uint32_t a=(uint32_t)arg;
-      if(a && a<0x50000000u && getenv("YDKJ_THREADARG")){
+      if(a && a<0x50000000u && getenv("PPU_THREADARG")){
         #define RB(o) (((uint32_t)vm_base[(a+(o))&0x0FFFFFFFu]<<24)|((uint32_t)vm_base[(a+(o)+1)&0x0FFFFFFFu]<<16)|((uint32_t)vm_base[(a+(o)+2)&0x0FFFFFFFu]<<8)|vm_base[(a+(o)+3)&0x0FFFFFFFu])
         uint32_t self=RB(0x0), thisp=RB(0x8), vtbl=RB(0xC);
         fprintf(stderr,"[THREADARG] arg=0x%08X [+0]=0x%08X this[+8]=0x%08X vtbl[+C]=0x%08X\n", a, self, thisp, vtbl);
@@ -427,7 +436,7 @@ int64_t sys_ppu_thread_create(ppu_context* ctx)
      * the host stack and overflow the 1 MB default. Reserve 256 MB (committed
      * lazily by the OS via STACK_SIZE_PARAM_IS_A_RESERVATION). */
 #ifdef _WIN32
-    if (g_gate_on < 0) g_gate_on = getenv("YDKJ_THREADGATE") ? 1 : 0;
+    if (g_gate_on < 0) g_gate_on = getenv("PPU_THREADGATE") ? 1 : 0;
     /* Gate only guest worker threads (game .text entry), never libsre/system threads. */
     unsigned _initflag = STACK_SIZE_PARAM_IS_A_RESERVATION;
     int _gate_this = (g_gate_on > 0 && entry >= 0x10000 && entry < 0x10000000);
@@ -443,7 +452,34 @@ int64_t sys_ppu_thread_create(ppu_context* ctx)
     }
     if (_gate_this && g_gate_n < 256) g_gate_pending[g_gate_n++] = t->host_thread;
 #else
-    int rc = pthread_create(&t->host_thread, NULL, ppu_host_thread_proc, t);
+    /* Same reservation, for the same reason. This is the HOST stack the
+     * recompiled C frames run on, not the guest stack (allocated above out of
+     * guest VM), and the default is nowhere near enough: 512 KB on Darwin,
+     * where a recompiled call chain that spills a whole ppu_context per frame
+     * overflows in a few hundred frames. Like the Win32 branch it is a
+     * reservation, not a commitment -- the pages are mapped lazily. */
+    int rc;
+    {
+        pthread_attr_t attr;
+        pthread_attr_init(&attr);
+        if (pthread_attr_setstacksize(&attr, PPU_HOST_STACK_BYTES) == 0) {
+            rc = pthread_create(&t->host_thread, &attr, ppu_host_thread_proc, t);
+        } else {
+            rc = EINVAL;
+        }
+        pthread_attr_destroy(&attr);
+        /* A host that will not hand out that much address space (a strict
+         * overcommit policy, a low RLIMIT_AS) gets the thread anyway on the
+         * default stack. A shallow guest thread runs fine there, and a deep
+         * one crashing beats not starting at all. */
+        if (rc != 0) {
+            fprintf(stderr, "[SYS] tid=%llu: no %zu MB host stack (%d), "
+                            "falling back to the default\n",
+                    (unsigned long long)thread_id,
+                    (size_t)(PPU_HOST_STACK_BYTES / (1024 * 1024)), rc);
+            rc = pthread_create(&t->host_thread, NULL, ppu_host_thread_proc, t);
+        }
+    }
     if (rc != 0) {
         t->state = PPU_THREAD_STATE_FREE;
         pthread_mutex_destroy(&t->finish_mutex);
@@ -556,14 +592,31 @@ int64_t sys_ppu_thread_join(ppu_context* ctx)
     }
 
     /* Clean up */
-    table_lock();
 #ifdef _WIN32
+    table_lock();
     CloseHandle(t->host_thread);
     CloseHandle(t->finish_event);
     t->host_thread = NULL;
     t->finish_event = NULL;
 #else
+    /* Reap the host thread with the table lock RELEASED.
+     *
+     * pthread_join blocks until the thread procedure returns, and that
+     * procedure's epilogue takes the table lock to stamp its own state. The
+     * joiner is woken well before that epilogue runs, because a guest thread
+     * normally ends at sys_ppu_thread_exit, which signals `finished` from
+     * INSIDE the thread body and then longjmps back out to the epilogue. So a
+     * joiner that holds the lock across the join is waiting for a thread that
+     * is waiting for the lock -- and the whole title stops with no message.
+     *
+     * Windows never saw it: its half of this block is CloseHandle, which
+     * records nothing about whether the thread has finished and never waits.
+     * The two halves have to be read as one thing, and only one of them was.
+     * Take the lock again afterwards for the teardown, which is what actually
+     * needs it: nothing can claim this slot in between, because it is still
+     * FINISHED rather than FREE until the line below. */
     pthread_join(t->host_thread, NULL);
+    table_lock();
     pthread_mutex_destroy(&t->finish_mutex);
     pthread_cond_destroy(&t->finish_cond);
 #endif

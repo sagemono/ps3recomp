@@ -20,6 +20,7 @@
 #include <stdint.h>
 #include <stddef.h>
 #include <string.h>
+#include <assert.h>
 
 #ifdef _WIN32
   #define WIN32_LEAN_AND_MEAN
@@ -83,7 +84,28 @@ extern uint32_t ppu_hle_inject_base;
 #endif
 #define VM_HLE_INJECT_BASE  ppu_hle_inject_base
 
-#define VM_PAGE_SIZE        0x00001000u      /* 4 KB page size */
+#define VM_PAGE_SIZE        0x00001000u      /* 4 KB: the GUEST page size */
+
+/* The HOST page size, which is what mprotect/VirtualProtect actually work in.
+ * Windows and x86-64 Linux use 4 KB, so it used to be safe to assume the two
+ * were the same number; Apple Silicon uses 16 KB, where an mprotect on a
+ * 4 KB-aligned address fails with EINVAL and a 4 KB guard "page" is really a
+ * 16 KB one that eats the bottom of the stack beside it. Everything that
+ * changes protection goes through this, so guest-visible layout stays 4 KB
+ * granular while the host operations are aligned to what the host needs. */
+static inline uint32_t vm_host_page_size(void)
+{
+#ifdef _WIN32
+    return VM_PAGE_SIZE;
+#else
+    static uint32_t s_page = 0;
+    if (!s_page) {
+        long v = sysconf(_SC_PAGESIZE);
+        s_page = (v > 0) ? (uint32_t)v : VM_PAGE_SIZE;
+    }
+    return s_page;
+#endif
+}
 
 /* Align a value up to `align` (must be power of 2) */
 #define VM_ALIGN_UP(val, align) (((val) + (align) - 1) & ~((align) - 1))
@@ -96,6 +118,17 @@ extern uint32_t ppu_hle_inject_base;
  * -----------------------------------------------------------------------*/
 extern uint8_t* vm_base;
 
+#ifndef _WIN32
+/* mprotect over the host pages covering [addr, addr+size). */
+static inline int vm__mprotect_pages(uint32_t addr, uint32_t size, int prot)
+{
+    uint64_t pg = vm_host_page_size();
+    uint64_t a0 = (uint64_t)addr & ~(pg - 1u);
+    uint64_t a1 = ((uint64_t)addr + size + pg - 1u) & ~(pg - 1u);
+    return mprotect(vm_base + a0, (size_t)(a1 - a0), prot);
+}
+#endif
+
 /* Guest address-space size; set non-zero once the host has mapped guest memory
  * (ppu_loader.cpp). Under native-VA mapping vm_base is deliberately 0 (guest
  * addr == host addr), so "is the VM ready?" must test this, not vm_base. */
@@ -106,9 +139,26 @@ extern uint32_t ppu_vm_size;
  * Initialization / Shutdown
  * -----------------------------------------------------------------------*/
 
+static inline void vm_shutdown(void);
+
 /*
  * Reserve the host address range and commit the main memory region.
  * Returns CELL_OK on success, CELL_ENOMEM on failure.
+ *
+ * The base is 4 GB aligned, and that is a guarantee rather than a hope.
+ * Translation runs one way as `host = vm_base + guest`, but a great deal of
+ * the HLE runs the other way: a bridge handed a host pointer recovers the
+ * guest address by truncating the pointer to 32 bits. GUEST_EA in
+ * libs/guest_struct.h is that, and the GUEST_PTR macros accept either kind of
+ * value on the same reasoning. The identity holds only while the low 32 bits
+ * of vm_base are zero.
+ *
+ * It used to hold by luck, because both kernels tend to place a 4 GB
+ * reservation on a 4 GB boundary. Nothing promises that, and the failure when
+ * it stops is not a crash: the truncated pointer is a plausible-looking guest
+ * address that moves with every run, so a write lands somewhere in the guest
+ * arena and the guest's own variable keeps whatever was in it. The cost of
+ * removing the question is one over-reservation that is trimmed back.
  */
 static inline int32_t vm_init(void)
 {
@@ -118,9 +168,24 @@ static inline int32_t vm_init(void)
     /*
      * Reserve a contiguous 4 GB region.  We only commit pages as needed.
      * MEM_RESERVE just reserves address space without backing pages.
+     *
+     * Windows cannot release part of a reservation, so the equivalent of the
+     * POSIX trim below is to over-reserve, note where the aligned base falls,
+     * release the lot and re-reserve exactly there. Another allocation could
+     * take that address in between, hence the retries; on a 64-bit address
+     * space losing a race for an 8 GB hole repeatedly is not a real risk, but
+     * failing outright beats carrying on unaligned.
      */
-    vm_base = (uint8_t*)VirtualAlloc(NULL, (SIZE_T)VM_TOTAL_SIZE,
-                                      MEM_RESERVE, PAGE_NOACCESS);
+    for (int attempt = 0; attempt < 8 && !vm_base; attempt++) {
+        uint8_t* probe = (uint8_t*)VirtualAlloc(NULL, (SIZE_T)(VM_TOTAL_SIZE * 2),
+                                                MEM_RESERVE, PAGE_NOACCESS);
+        if (!probe) break;
+        uint8_t* aligned = (uint8_t*)(((uintptr_t)probe + (uintptr_t)VM_TOTAL_SIZE - 1u)
+                                      & ~((uintptr_t)VM_TOTAL_SIZE - 1u));
+        VirtualFree(probe, 0, MEM_RELEASE);
+        vm_base = (uint8_t*)VirtualAlloc(aligned, (SIZE_T)VM_TOTAL_SIZE,
+                                         MEM_RESERVE, PAGE_NOACCESS);
+    }
     if (!vm_base) return CELL_ENOMEM;
 
     /* Commit main memory region (256 MB, read/write) */
@@ -140,13 +205,25 @@ static inline int32_t vm_init(void)
     }
 
 #else /* POSIX */
-    vm_base = (uint8_t*)mmap(NULL, (size_t)VM_TOTAL_SIZE,
-                              PROT_NONE,
-                              MAP_PRIVATE | MAP_ANONYMOUS | MAP_NORESERVE,
-                              -1, 0);
-    if (vm_base == MAP_FAILED) {
-        vm_base = NULL;
-        return CELL_ENOMEM;
+    /* Over-map and trim: ask for twice the space, keep the 4 GB aligned window
+     * inside it, and give the head and tail back. mmap can hand back part of a
+     * mapping, so this needs no retry and cannot race. */
+    {
+        size_t want = (size_t)VM_TOTAL_SIZE;
+        uint8_t* raw = (uint8_t*)mmap(NULL, want * 2, PROT_NONE,
+                                      MAP_PRIVATE | MAP_ANONYMOUS | MAP_NORESERVE,
+                                      -1, 0);
+        if (raw == MAP_FAILED) {
+            vm_base = NULL;
+            return CELL_ENOMEM;
+        }
+        uint8_t* aligned = (uint8_t*)(((uintptr_t)raw + (uintptr_t)want - 1u)
+                                      & ~((uintptr_t)want - 1u));
+        if (aligned > raw)
+            munmap(raw, (size_t)(aligned - raw));
+        if (raw + want * 2 > aligned + want)
+            munmap(aligned + want, (size_t)((raw + want * 2) - (aligned + want)));
+        vm_base = aligned;
     }
 
     /* Make main memory readable/writable */
@@ -165,6 +242,16 @@ static inline int32_t vm_init(void)
         return CELL_ENOMEM;
     }
 #endif
+
+    /* The invariant every host-pointer-to-guest-address truncation rests on.
+     * The reservations above hold it by construction; this is here so that a
+     * change to either of them announces itself now, instead of as a stray
+     * four-byte write to a moving address somewhere else entirely. */
+    assert(((uintptr_t)vm_base & ((uintptr_t)VM_TOTAL_SIZE - 1u)) == 0);
+    if (((uintptr_t)vm_base & ((uintptr_t)VM_TOTAL_SIZE - 1u)) != 0) {
+        vm_shutdown();
+        return CELL_ENOMEM;
+    }
 
     /* Zero main memory */
     memset(vm_base + VM_MAIN_MEM_BASE, 0, VM_MAIN_MEM_SIZE);
@@ -198,7 +285,7 @@ static inline int32_t vm_commit(uint32_t addr, uint32_t size)
     if (!VirtualAlloc(vm_base + addr, size, MEM_COMMIT, PAGE_READWRITE))
         return CELL_ENOMEM;
 #else
-    if (mprotect(vm_base + addr, size, PROT_READ | PROT_WRITE) != 0)
+    if (vm__mprotect_pages(addr, size, PROT_READ | PROT_WRITE) != 0)
         return CELL_ENOMEM;
 #endif
 
@@ -227,7 +314,7 @@ static inline int32_t vm_protect(uint32_t addr, uint32_t size, int read, int wri
     if (write) prot |= PROT_WRITE;
     if (exec)  prot |= PROT_EXEC;
 
-    if (mprotect(vm_base + addr, size, prot) != 0)
+    if (vm__mprotect_pages(addr, size, prot) != 0)
         return CELL_EFAULT;
 #endif
 
@@ -258,10 +345,15 @@ static inline void vm_stack_alloc_init(vm_stack_alloc* sa)
  */
 static inline uint32_t vm_stack_allocate(vm_stack_alloc* sa, uint32_t stack_size)
 {
-    stack_size = VM_ALIGN_UP(stack_size, VM_PAGE_SIZE);
+    /* Host page granularity throughout: the guard must be exactly one host
+     * page, and the stack above it must start on a host page boundary, or a
+     * 16 KB host would either refuse the mprotect or protect part of the
+     * stack itself. On a 4 KB host this is the layout it always was. */
+    uint32_t pg = vm_host_page_size();
+    stack_size = VM_ALIGN_UP(stack_size, pg);
 
     /* Add a guard page */
-    uint32_t total = stack_size + VM_PAGE_SIZE;
+    uint32_t total = stack_size + pg;
 
     if (sa->next_addr + total > sa->region_end)
         return 0; /* out of stack space */
@@ -270,9 +362,9 @@ static inline uint32_t vm_stack_allocate(vm_stack_alloc* sa, uint32_t stack_size
     sa->next_addr += total;
 
     /* Guard page at the bottom (no access) */
-    vm_protect(base, VM_PAGE_SIZE, 0, 0, 0);
+    vm_protect(base, pg, 0, 0, 0);
 
-    return base + VM_PAGE_SIZE; /* skip the guard page */
+    return base + pg; /* skip the guard page */
 }
 
 /* ---------------------------------------------------------------------------

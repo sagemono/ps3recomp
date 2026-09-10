@@ -399,9 +399,7 @@ static struct SpursInst* spurs_inst_find(u32 ea)
     return NULL;
 }
 
-#ifdef _WIN32
 static DWORD WINAPI spurs_kernel_thread(LPVOID p);
-#endif
 
 static s32 spurs_initialize_common(u32 spurs_ea, u32 nspus, const char* prefix)
 {
@@ -424,12 +422,10 @@ static s32 spurs_initialize_common(u32 spurs_ea, u32 nspus, const char* prefix)
     *(vm_base + spurs_ea + SPURS_NSPUS) = (u8)si->nspus;
     vm_write64(spurs_ea + SPURS_WKL_FLAG, 0xFFFFFFFFFFFFFFFFull); /* no receiver */
 
-#ifdef _WIN32
     if (!si->kernel_live) {
         si->kernel_live = 1;
         CreateThread(NULL, 1u << 20, spurs_kernel_thread, si, 0, NULL);
     }
-#endif
     printf("[cellSpurs] Initialize \"%s\" ea=0x%08X nSpus=%u (real BE instance + kernel poll)\n",
            si->prefix, spurs_ea, si->nspus);
     return CELL_OK;
@@ -860,7 +856,7 @@ s32 cellSpursCreateTask(CellSpursTaskset* taskset, CellSpursTaskId* taskId,
              * pointer that reads back 0 (the task GETs from EA 0 -> some field of
              * its work descriptor is null in our run). Each of the 4 arg words that
              * looks like a valid guest EA gets 64 bytes dumped as BE u32s. */
-            if (getenv("LBP_TASKSET_TRACE")) {
+            if (getenv("SPURS_TASKSET_TRACE")) {
                 for (int a = 0; a < 4; a++) {
                     uint32_t p = task_arg[a];
                     if (p < 0x10000 || p >= 0x50000000u) continue;   /* not a plausible EA */
@@ -1260,12 +1256,12 @@ s32 cellSpursAddWorkloadWithAttribute(CellSpurs* spurs,
             }
             printf("\n");
         }
-        /* PM-COMPLETENESS PROBE (LBP_PM_DUMP): the wwsjob job-manager PM is
+        /* PM-COMPLETENESS PROBE (SPURS_PM_DUMP): the wwsjob job-manager PM is
          * ASSEMBLED at runtime -- the embedded ELF (LS 0xA00) has zero HOLES at
          * LS 0xAEE..0x11B0 and the executeStage lives at LS 0x14f4, both filled
          * by SPURS setup. Report whether OUR runtime's PM has that code or the
          * holes, and (once) write the whole image out so we can re-lift it. */
-        if (getenv("LBP_PM_DUMP") && pm_ea && pm_sz >= 0x2200 && pm_sz <= 0x4000) {
+        if (getenv("SPURS_PM_DUMP") && pm_ea && pm_sz >= 0x2200 && pm_sz <= 0x4000) {
             u32 exe = vm_read32(pm_ea + 0xAF4);          /* LS 0x14f4 executeStage */
             int zeros = 0; for (u32 o = 0xEE; o < 0x7B0; o += 4)
                 if (vm_read32(pm_ea + o) == 0) zeros += 4;
@@ -1408,8 +1404,14 @@ static WklPm* spurs_resolve_pm(u32 wid)
     return r->fn ? r : NULL;
 }
 
-#ifdef _WIN32
-/* One virtual SPU running a workload's policy module. The WWS job manager
+/* Thread creation, waiting and Sleep come from runtime/platform/win32_compat.h
+ * off Windows (included at the top of this file), which is what lets the three
+ * thread bodies below stand as written on every host. SetThreadStackGuarantee
+ * has no POSIX counterpart -- it reserves stack for the stack-overflow
+ * exception handler, and there is no such handler here -- so it stays behind
+ * an _WIN32 guard where it is used.
+ *
+ * One virtual SPU running a workload's policy module. The WWS job manager
  * runs concurrently across N SPUs (RPCS3: jobmanagerCellSpursKernel0..N): each
  * claims jobs from the shared queue and advances its own lane of the sync
  * barrier. Running the SPUs SEQUENTIALLY deadlocks -- SPU 0 completes its job,
@@ -1423,7 +1425,9 @@ struct spurs_pm_worker_arg {
 };
 static DWORD WINAPI spurs_pm_worker(LPVOID p)
 {
+#ifdef _WIN32
     { ULONG g = 256 * 1024; SetThreadStackGuarantee(&g); }
+#endif
     struct spurs_pm_worker_arg* a = (struct spurs_pm_worker_arg*)p;
     spu_run_policy_module(a->fn, a->image_id, a->pm, a->pm_size,
                           a->arg, a->wid, a->ea, a->spu_num);
@@ -1432,7 +1436,9 @@ static DWORD WINAPI spurs_pm_worker(LPVOID p)
 
 static DWORD WINAPI spurs_kernel_thread(LPVOID p)
 {
+#ifdef _WIN32
     { ULONG g = 256 * 1024; SetThreadStackGuarantee(&g); }  /* let SO reach the reporter */
+#endif
     struct SpursInst* si = (struct SpursInst*)p;
     static volatile long s_pm_off = -1;
     if (s_pm_off < 0) s_pm_off = getenv("PS3_NO_SPURS_PM") ? 1 : 0;
@@ -1633,7 +1639,6 @@ static DWORD WINAPI spurs_kernel_thread(LPVOID p)
         }
     }
 }
-#endif
 
 s32 cellSpursReadyCountStore(CellSpurs* spurs, CellSpursWorkloadId wid,
                              u32 value)
@@ -2459,16 +2464,15 @@ static void jc_execute(u32 entry_ea, u32 jc_ea, u32 size_desc)
            jc_ea, jobs);
 }
 
-#ifdef _WIN32
 static DWORD WINAPI jc_thread(LPVOID p)
 {
     int slot = (int)(intptr_t)p;
-    /* TIMING PROBE (LBP_JC_DELAY=ms): the real jm2 chain walker is async and
+    /* TIMING PROBE (SPURS_JC_DELAY=ms): the real jm2 chain walker is async and
      * picks up jobs as the PPU appends them + fills their descriptors. Our walk
      * is one-shot; if it reads descriptors before the PPU populates the I/O
      * (n_dma=0, empty ioBuffer), deferring the walk should let real I/O appear.
      * Confirms timing-vs-never before committing to the async rewrite. */
-    { const char* d = getenv("LBP_JC_DELAY");
+    { const char* d = getenv("SPURS_JC_DELAY");
       if (d && *d) Sleep((unsigned)atoi(d)); }
     jc_execute(s_jobchains[slot].entry_ea, s_jobchains[slot].jc_ea,
                s_jobchains[slot].size_desc);
@@ -2478,7 +2482,6 @@ static DWORD WINAPI jc_thread(LPVOID p)
     jc_signal_done(s_jobchains[slot].jc_ea);
     return 0;
 }
-#endif
 
 /* cellSpursRunJobChain -- start job chain execution (async, like the real one). */
 /* cellSpursRunJobChain(const CellSpursJobChain* jobChain) -- ONE argument.
@@ -2507,14 +2510,12 @@ static s32 jc_start(u64 jc_ea, const char* who)
             jc_dump_commands(who, s_jobchains[i].entry_ea, 16);
         }
         if (s_off || !s_jobchains[i].entry_ea) return CELL_OK;
-#ifdef _WIN32
         /* Coalesce: a chain already being walked must not start twice. */
         if (_InterlockedCompareExchange(&s_jobchains[i].running, 1, 0) == 0) {
             HANDLE th = CreateThread(NULL, 1u << 20, jc_thread, (LPVOID)(intptr_t)i, 0, NULL);
             if (th) CloseHandle(th);
             else s_jobchains[i].running = 0;
         }
-#endif
         return CELL_OK;
     }
     printf("[cellSpurs] %s(jc=0x%08X) -- UNKNOWN chain (no Create seen)\n", who, (u32)jc_ea);

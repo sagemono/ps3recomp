@@ -21,9 +21,7 @@
 #include <stdlib.h>
 #include <stdio.h>
 #include <stdio.h>
-#ifdef _WIN32
-#include <windows.h>
-#endif
+#include "../platform/win32_compat.h"
 
 #ifdef __cplusplus
 extern "C" {
@@ -33,25 +31,21 @@ extern uint8_t* vm_base;
 
 /* Guard against a guest DMA whose effective address lands in reserved-but-
  * uncommitted guest memory (the 4 GB VM is MEM_RESERVE; only main mem / RSX /
- * SPU / lv2-heap / stack pages are committed). A garbage EA — e.g. one the SPURS
- * kernel computes from an incomplete context during bring-up — must be treated
- * as a failed DMA, NOT crash the host emulator with an access violation. On
- * Windows we query the page state; the whole [ea, ea+size) range must be
- * committed and accessible. Returns 1 if the range is safe to memcpy. */
+ * SPU / lv2-heap / stack pages are committed). A garbage EA must be treated
+ * as a failed DMA, NOT crash the host emulator with an access violation.
+ * Queries the page state and demand-commits on first touch; the whole
+ * [ea, ea+size) range must be committed and accessible.
+ * Returns 1 if the range is safe to memcpy. */
 static inline int mfc_ea_range_committed(uint64_t ea, uint32_t size)
 {
-    /* The flat VM reserves the FULL 32-bit guest space and demand-commits
-     * pages on first touch (ppu_loader's vectored handler), so every 32-bit
-     * EA is safe host memory by construction -- a garbage EA reads zeros /
-     * commits an empty page, exactly like vm_read32. The old implementation
-     * additionally VirtualQuery'd the range on EVERY MFC transfer: VTune
-     * measured that at 94 CPU-seconds in a 50 s movie run -- 60x the entire
-     * lifted-SPU execution cost, and the real reason the Bink intro decoded
-     * at 1-2 FPS. Bounds-check only. */
+    /* The VM reserves the full 32-bit guest space but only commits specific
+     * regions (main mem, stack, RSX). A DMA to an uncommitted page must
+     * commit it on demand rather than crash. A bitmap caches the per-64K-page
+     * committed state so the steady-state cost is two bit tests; only a first
+     * touch per page pays the VirtualQuery syscall. */
     uint32_t e = (uint32_t)ea;
     if (size == 0) return 0;
     if ((uint64_t)e + (uint64_t)size > 0x100000000ull) return 0;   /* past 4 GB */
-#ifdef _WIN32
     if (!vm_base) return 0;
     /* Committed-page bitmap as a self-healing CACHE of VirtualQuery. The
      * demand-commit fault handler seeds it, but regions the host commits
@@ -69,15 +63,6 @@ static inline int mfc_ea_range_committed(uint64_t ea, uint32_t size)
           uint8_t* p = vm_base + ((uintptr_t)pg[i] << 16);
           if (VirtualQuery(p, &mbi, sizeof mbi) == 0) return 0;
           if (mbi.State != MEM_COMMIT) {
-              /* COMMIT it, do not refuse it. The PPU demand-commits guest
-               * pages on first touch; the SPU had no equivalent and simply
-               * dropped the transfer, so the two processors disagreed about
-               * which memory exists. An SPU-written output buffer is the case
-               * that breaks -- the SPU is the FIRST writer, so the page has
-               * never faulted, and the job's results vanish. Worse, a job that
-               * then polls for its own output spins forever: four of Tokyo
-               * Jungle's twelve images wedged this way, each burning 4096
-               * skipped transfers per run before the runaway guard stopped it. */
               if (!VirtualAlloc(p, 0x10000, MEM_COMMIT, PAGE_READWRITE)) return 0;
           } else if (mbi.Protect & (PAGE_NOACCESS | PAGE_GUARD)) {
               return 0;
@@ -85,7 +70,6 @@ static inline int mfc_ea_range_committed(uint64_t ea, uint32_t size)
           g_vm_page_bitmap[pg[i] >> 3] |= (uint8_t)(1u << (pg[i] & 7));
       }
     }
-#endif
     return 1;
 }
 
@@ -302,10 +286,10 @@ static inline int mfc_do_transfer(spu_context* spu, uint32_t lsa, uint64_t ea,
                           i, buckets[i], 10);
           }
       } }
-    /* LBP_MFC_TRACE: attribute silent DMA-poll loops (a wedged task whose
+    /* SPU_MFC_TRACE: attribute silent DMA-poll loops (a wedged task whose
      * host thread samples "in ntdll" because VirtualQuery dominates). Prints
      * every 64k-th transfer per thread: enough to see the loop's pc/ea. */
-    { static int s_t = -1; if (s_t < 0) { const char* e = getenv("LBP_MFC_TRACE");
+    { static int s_t = -1; if (s_t < 0) { const char* e = getenv("SPU_MFC_TRACE");
         s_t = e ? atoi(e) : 0; if (e && !s_t) s_t = 1; }
       if (s_t) { static _Thread_local unsigned long long _n; ++_n;
         /* level 2+: also print each thread's first 192 transfers (setup DMAs
@@ -351,7 +335,7 @@ static inline int mfc_do_transfer(spu_context* spu, uint32_t lsa, uint64_t ea,
         } } }
     /* cellAudio port-ring window: log every guest write into it (rare, load-
      * bearing -- the audio OUTPUT path). Same env gate as the sampler. */
-    { static int s_pr = -1; if (s_pr < 0) s_pr = getenv("LBP_MFC_TRACE") ? 1 : 0;
+    { static int s_pr = -1; if (s_pr < 0) s_pr = getenv("SPU_MFC_TRACE") ? 1 : 0;
       if (s_pr && (cmd & 0x20) && !(cmd & 0x40) &&
           (((uint32_t)ea >= 0x01000000u && (uint32_t)ea < 0x01800000u) ||
            ((uint32_t)ea >= 0x00927D00u && (uint32_t)ea < 0x00928000u))) {
@@ -532,7 +516,7 @@ static inline int mfc_do_transfer(spu_context* spu, uint32_t lsa, uint64_t ea,
          * (32B from ~0x94Fxxx) then a large GET from a NULL source = the
          * overlay never loads. Dump the descriptor content to see where the
          * real source EA was dropped. */
-        { static int s_ovl = -1; if (s_ovl < 0) s_ovl = getenv("LBP_OVL_DIAG") ? 1 : 0;
+        { static int s_ovl = -1; if (s_ovl < 0) s_ovl = getenv("SPU_OVL_DIAG") ? 1 : 0;
           if (s_ovl) {
               /* overlay-load map: image-6 GET of a code-sized chunk into the
                * high LS overlay region, with its (now-correct) plugin source.
@@ -589,7 +573,7 @@ static inline int mfc_do_transfer(spu_context* spu, uint32_t lsa, uint64_t ea,
          * functions resident for this context. */
         { extern void spu_overlay_note_get(spu_context*, uint32_t, const uint8_t*, uint32_t);
           spu_overlay_note_get(spu, (uint32_t)ea, (const uint8_t*)ls_ptr, size); }
-        /* LBP_SPU_WATCH: a DMA GET landing on a watched LS line is how the PPU
+        /* SPU_LS_WATCH: a DMA GET landing on a watched LS line is how the PPU
          * delivers commands into the SPU's queue (bypasses spu_ls_write128). */
         { int _n; unsigned* _w = spu_ls_watch_list(&_n);
           for (int _i = 0; _i < _n; _i++) {
@@ -604,8 +588,59 @@ static inline int mfc_do_transfer(spu_context* spu, uint32_t lsa, uint64_t ea,
               }
           } }
     } else if (mfc_is_put(cmd)) {
-        /* PUT: local store -> main memory */
-        memcpy(ea_ptr, ls_ptr, size);
+        /* PUT: local store -> main memory.
+         *
+         * A plain PUT is a store by another processor as far as every SPU
+         * holding a reservation on the lines it covers is concerned: on
+         * hardware those reservations are lost and their SPUs take
+         * SPU_EVENT_LR. Unannounced, a peer's pending PUTLLC compares its
+         * snapshot against a line this copy has already replaced and commits
+         * over it, and a peer parked on RdEventStat sleeps through the write.
+         *
+         * So when the span touches a reserved line the copy and the notify run
+         * as ONE critical section under the lock-line lock -- the same contract
+         * the PPU store path and the PUTLLC commit keep, and the only way the
+         * copy cannot land inside a peer's compare-and-commit window. Spans
+         * that touch no reserved line keep the lock-free copy: bulk asset PUTs
+         * are large and hot, and the scan is a bitmap bit per 128 bytes against
+         * a global that stays zero until an SPU reserves its first line.
+         *
+         * The unreserved path re-checks afterwards because a line can be
+         * reserved between the scan and the end of the copy. That peer's
+         * snapshot may be torn, so it gets its event and loses its reservation
+         * rather than committing against a line it never saw whole. */
+        {
+            extern int  spu_coh_is_reserved(uint32_t);
+            extern void spu_coh_notify_write(uint32_t);
+            extern void spu_lockline_lock(void);
+            extern void spu_lockline_unlock(void);
+            uint32_t a0 = (uint32_t)ea & ~127u;
+            uint32_t a1 = ((uint32_t)ea + size - 1u) & ~127u;
+            int span_reserved = 0;
+            for (uint32_t a = a0; ; a += 128u) {
+                if (spu_coh_is_reserved(a)) { span_reserved = 1; break; }
+                if (a == a1) break;
+            }
+            if (span_reserved) {
+                spu_lockline_lock();
+                memcpy(ea_ptr, ls_ptr, size);
+                for (uint32_t a = a0; ; a += 128u) {
+                    if (spu_coh_is_reserved(a)) spu_coh_notify_write(a);
+                    if (a == a1) break;
+                }
+                spu_lockline_unlock();
+            } else {
+                memcpy(ea_ptr, ls_ptr, size);
+                for (uint32_t a = a0; ; a += 128u) {
+                    if (spu_coh_is_reserved(a)) {
+                        spu_lockline_lock();
+                        spu_coh_notify_write(a);
+                        spu_lockline_unlock();
+                    }
+                    if (a == a1) break;
+                }
+            }
+        }
         /* Bink sync-area watch (armed by the PPU barrier probe): log SPU PUTs
          * that touch the per-SPU lane counters. */
         { extern uint32_t g_barrier_sync_watch;
@@ -675,9 +710,13 @@ static inline int mfc_run_list(spu_context* spu, uint32_t elem_lsa,
         uint64_t ea = (ea_base & 0xFFFFFFFF00000000ull) | eal;
 
         if (xfer_size) {
-            int rc = mfc_do_transfer(spu, dest_lsa, ea, xfer_size, base_cmd);
+            /* Each list element occupies whole LS quadwords, even for
+             * 1/2/4/8-byte transfers. The EA supplies its byte offset within
+             * the first quadword. Keep the rounded cursor for stall/resume. */
+            uint32_t transfer_lsa = (dest_lsa & ~15u) | (eal & 15u);
+            int rc = mfc_do_transfer(spu, transfer_lsa, ea, xfer_size, base_cmd);
             if (rc != 0) return rc;
-            dest_lsa += xfer_size;
+            dest_lsa = (dest_lsa & ~15u) + ((xfer_size + 15u) & ~15u);
         }
 
         if (stall_notify) {
@@ -736,6 +775,17 @@ static inline int mfc_list_stall_ack(struct mfc_engine* mfc, spu_context* spu,
         fprintf(stderr, "[mfc-list] RESUME img=%d tag=%u elem@0x%05X left=%u\n",
                 spu->image_id, t, spu->list_stall_elem_lsa[t],
                 spu->list_stall_remaining[t]); }
+    /* What the stall handler left in the remaining elements, and where they are
+     * about to land. If the handler was supposed to fill in the claimed job's
+     * EA and did not, the elements read back empty and the transfer is a no-op
+     * -- which looks identical to "the pipeline never ran" from the PPU side. */
+    { uint32_t _e = spu->list_stall_elem_lsa[t] & SPU_LS_MASK;
+      fprintf(stderr, "[mfc-list] RESUME-ELEMS dest=0x%05X elems\n0x%05X:",
+              spu->list_stall_dest_lsa[t], _e);
+      for (uint32_t _o = 0; _o < 16 && (_e + _o) + 3 < SPU_LS_SIZE; _o += 4)
+          fprintf(stderr, " %02X%02X%02X%02X", spu->ls[_e+_o], spu->ls[_e+_o+1],
+                  spu->ls[_e+_o+2], spu->ls[_e+_o+3]);
+      fprintf(stderr, "\n"); }
     int rc = mfc_run_list(spu, spu->list_stall_elem_lsa[t], spu->list_stall_remaining[t],
                           spu->list_stall_dest_lsa[t], spu->list_stall_ea_base[t],
                           spu->list_stall_cmd[t], t);
@@ -1188,9 +1238,9 @@ static inline int mfc_submit(mfc_engine* mfc, spu_context* spu, uint32_t cmd)
      * movie-plane main-heap region (0x40C00000..0x41000000) -- so if the log
      * stays empty the task only ever does <=128B control DMAs (stuck in the
      * SPURS job-queue kernel, never dispatching decode); if plane-sized PUTs
-     * appear we learn where the decoded frame actually lands. Env LBP_DMATRACE. */
+     * appear we learn where the decoded frame actually lands. Env SPU_DMATRACE_RAW. */
     {
-        static int64_t bt=-2; if (bt==-2){ const char* e=getenv("LBP_DMATRACE"); bt=e?1:0; }
+        static int64_t bt=-2; if (bt==-2){ const char* e=getenv("SPU_DMATRACE_RAW"); bt=e?1:0; }
         if (bt && spu->image_id==3) {
             uint32_t ea32 = (uint32_t)ea;
             int is_put   = ((cmd & 0x20) && !(cmd & 0x40));   /* PUT-family */
@@ -1288,6 +1338,15 @@ static inline int mfc_submit(mfc_engine* mfc, spu_context* spu, uint32_t cmd)
      * supplies the low-32 EA; only EAH carries through. Passing `lsa` as the
      * list address read list elements from the transfer DESTINATION. */
     if (mfc_is_list(cmd)) {
+        /* List DMAs are rare, and they skip the per-element trace above, so
+         * they are easy to miss entirely while diagnosing a pipeline that
+         * never fills. Always report the issue: the DESTINATION lsa is the
+         * value the whole transfer hangs on. */
+        { static int _l = 0; if (_l++ < 32)
+            fprintf(stderr, "[mfc-list] ISSUE img=%d cmd=0x%02X dest_lsa=0x%05X "
+                    "list\n0x%05X size=0x%X (%u elems) tag=%u\n",
+                    spu->image_id, cmd, lsa, (uint32_t)ea & SPU_LS_MASK,
+                    size, size / 8, tag); }
         rc = mfc_do_list_transfer(spu, (uint32_t)ea & SPU_LS_MASK,
                                   ea & 0xFFFFFFFF00000000ull, size, cmd);
     } else {

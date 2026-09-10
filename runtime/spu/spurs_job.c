@@ -290,14 +290,14 @@ int spu_run_spurs_job(spu_lifted_entry_fn entry, int image_id,
           }
       } }
 
-    /* LBP job protocol probe (LBP_JOB_DUMP): the game's one shared job binary
+    /* LBP job protocol probe (SPURS_JOB_DUMP): the game's one shared job binary
      * ("JOBCRT Ver13" crt + main @0x1570) reads a be u64 EA out of the
      * descriptor's USER DATA at +0x30, GETs a 128-byte command block from it,
      * then jump-tables on the command TYPE (word1 of the block, cases 0..5).
      * The header's input-DMA-list/io fields are legitimately zero for it. Dump
      * the user data + that command block so the bail path is attributable. */
     uint32_t dump_cmd = 0;
-    if (getenv("LBP_JOB_DUMP")) {
+    if (getenv("SPURS_JOB_DUMP")) {
         uint64_t ud  = g64(job_ea + JH_SIZE);        /* desc+0x30 */
         uint32_t cmd = (uint32_t)ud;                 /* low word = EA */
         fprintf(stderr, "[spurs-job] job 0x%08X userdata: %016llX %016llX %016llX %016llX\n",
@@ -379,7 +379,7 @@ int spu_run_spurs_job(spu_lifted_entry_fn entry, int image_id,
           fprintf(stderr, "[spurs-job] job 0x%08X posted mbox=0x%08X intr=0x%08X\n",
                   job_ea, g_spurs_job_mbox, g_spurs_job_mbox_intr); }
 
-    if (getenv("LBP_JOB_DUMP")) {
+    if (getenv("SPURS_JOB_DUMP")) {
         fprintf(stderr, "[spurs-job] job 0x%08X exit: status=0x%X stop=0x%X pc=0x%05X\n",
                 job_ea, ctx.status, ctx.stop_code, ctx.pc);
         /* Post-run view of the same command block: the game polls result/status

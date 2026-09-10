@@ -588,11 +588,11 @@ skip_inject: ;
     data->button[CELL_PAD_BTN_OFFSET_DIGITAL1] = (u16)(hs->buttons & 0xFF);
     data->button[CELL_PAD_BTN_OFFSET_DIGITAL2] = (u16)((hs->buttons >> 8) & 0xFF);
 
-    /* LBP_AUTOPRESS: headless bring-up input -- pulse CROSS then START every few
+    /* PAD_AUTOPRESS: headless bring-up input -- pulse CROSS then START every few
      * seconds of polling so boot screens that wait for input advance without a
      * human at the pad. Env-gated test scaffolding, off by default. */
     { static int s_ap = -1; static unsigned s_apn = 0;
-      if (s_ap < 0) s_ap = getenv("LBP_AUTOPRESS") ? 1 : 0;
+      if (s_ap < 0) s_ap = getenv("PAD_AUTOPRESS") ? 1 : 0;
       if (s_ap && port_no == 0) {
           unsigned ph = s_apn++ % 240;
           if (ph < 12)
@@ -602,13 +602,13 @@ skip_inject: ;
       } }
 
     /* PAD_SCRIPT="<sec>:<mask>,<sec>:<mask>,..." -- press a NAMED button at a
-     * given wall-clock second, each held ~250 ms. LBP_AUTOPRESS only pulses
+     * given wall-clock second, each held ~250 ms. PAD_AUTOPRESS only pulses
      * CROSS and START, which is enough to clear a "press start" screen but not
      * to navigate a menu: You Don't Know Jack needs DOWN to move off its name
      * field before CROSS means anything. Masks are CELL_PAD_CTRL_* packed as
      * (DIGITAL2 << 8) | DIGITAL1: START 0x0008, UP 0x0010, DOWN 0x0040,
      * LEFT 0x0080, RIGHT 0x0020, CROSS 0x4000, CIRCLE 0x2000, TRIANGLE 0x1000.
-     * Legit input simulation on the same footing as LBP_AUTOPRESS/PAD_STICK. */
+     * Legit input simulation on the same footing as PAD_AUTOPRESS/PAD_STICK. */
     { static int s_sc = -1;
       static struct { double t; unsigned mask; } ev[32]; static int n_ev = 0;
       static unsigned long long t0 = 0;   /* not ULONGLONG: this builds on POSIX too */
