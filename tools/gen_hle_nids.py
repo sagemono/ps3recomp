@@ -129,9 +129,15 @@ def main():
         for _nid, name in regs:
             f.write(f"    void {name}(void);\n")
         f.write("}\n")
+        if any(name == 'cellSaveDataListAutoLoad' for _, name in regs):
+            f.write('struct ppu_context;\n')
+            f.write('extern "C" void ps3_savedata_list_auto_load(ppu_context*);\n')
+            f.write('extern "C" void ps3_hle_register_ctx(unsigned, const char*, void (*)(ppu_context*));\n')
         f.write('extern "C" void ppu_hle_register_all(void) {\n')
         for nid, name in regs:
             f.write(f'    ps3_hle_register(0x{nid:08X}u, "{name}", (void*){name});\n')
+        if any(name == 'cellSaveDataListAutoLoad' for _, name in regs):
+            f.write('    ps3_hle_register_ctx(0x21425307u, "cellSaveDataListAutoLoad", ps3_savedata_list_auto_load);\n')
         f.write("}\n")
     print(f"wrote {args.out}: {len(regs)} NID handlers from {nlibs} module(s)")
 
