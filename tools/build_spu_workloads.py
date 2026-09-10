@@ -96,6 +96,15 @@ def main():
                     help="name of the emitted registration function")
     ap.add_argument("--title", default="spu", help="label used in comments")
     ap.add_argument("--lifter", default=os.path.join(os.path.dirname(os.path.abspath(__file__)), "spu_lifter.py"))
+    ap.add_argument("--extra-funcs", action="append", default=[],
+                    metavar="IMAGE=ADDR[,ADDR...]",
+                    help="Extra function entry addresses for one image, passed "
+                         "through to spu_lifter --extra-funcs. Repeatable. An SPU "
+                         "image entered by an INTERRUPT VECTOR needs this: the "
+                         "handler is not reachable from the entry point by any "
+                         "branch, so --auto-functions cannot see it, and dispatch "
+                         "to it lands on address 0 at runtime. "
+                         "e.g. --extra-funcs pm_wwsjob=0xA2C")
     ap.add_argument("--constructor", action="store_true",
                     help="also emit an __attribute__((constructor)) that calls the register fn at startup")
     ap.add_argument("--relift", action="store_true", help="re-lift even if a prior lift exists")
@@ -106,6 +115,13 @@ def main():
     elfs = sorted(glob.glob(os.path.join(args.images, "*.elf")))
     if not elfs:
         sys.exit(f"[build_spu_workloads] no *.elf in {args.images}")
+
+    extra_funcs = {}
+    for spec in args.extra_funcs:
+        if "=" not in spec:
+            sys.exit(f"[build_spu_workloads] --extra-funcs wants IMAGE=ADDR, got {spec!r}")
+        k, v = spec.split("=", 1)
+        extra_funcs[k.strip()] = v.strip()
 
     imgs = []  # (img, prefix, fingerprint, e_entry)
     for e in elfs:
@@ -122,6 +138,9 @@ def main():
             os.makedirs(outdir, exist_ok=True)
             cmd = [sys.executable, args.lifter, e, "--auto-functions", e,
                    "--symbol-prefix", prefix, "-o", outdir]
+            if img in extra_funcs:
+                cmd += ["--extra-funcs", extra_funcs[img]]
+                print(f"[build_spu_workloads] {img}: extra entries {extra_funcs[img]}")
             print(f"[build_spu_workloads] LIFT {img}  (prefix {prefix})")
             if subprocess.run(cmd).returncode != 0:
                 sys.exit(f"[build_spu_workloads] lift FAILED for {img}")
