@@ -147,6 +147,25 @@ same engine then needed the FIFO subchannel treated as a binding slot rather
 than an engine selector, HDR (`F_W16Z16Y16X16`) colour surfaces, and
 fragment-output NaN guards — all on top of his engine, not in place of it.
 
+
+*The 2026-09 batch (#152-#161), from getting Yakuza: Dead Souls running on a Mac*
+- **Lifted SPU threads** — a thread runs its own lifted image in its own
+  architectural context, with lv2 copy semantics for the four thread arguments
+  (games reuse one guest args block across a group and rewrite it between calls,
+  so reading it lazily hands every thread the previous thread's values) (#152).
+- **lv2 condition signals retained; static guest mutexes registered** (#153).
+- **cellAudio** — guest ring indices wrapped, block tags and timestamps
+  provided (#154).
+- **cellSysutil** — dialog completions delivered from the guest callback poll
+  (#155).
+- **sceNpTrophy** first-use slots and registration completion (#156);
+  **cellGame** content-volume space and guest paths (#157); **cellSaveData**
+  callback ABI and guest file-request execution (#158).
+- **RSX: full FIFO driver methods, serialized callbacks and MRT exports** (#159).
+- **macOS native host, Metal rendering and game runner** (#160) — the second
+  platform backend, and the reason aarch64 is proven rather than assumed.
+- **sceNp** local score service initialized while offline (#161).
+
 ### Jonathan Del Corpo — [@JonathanDC64](https://github.com/JonathanDC64)
 Correctness and robustness fixes distilled from a **Demon's Souls** port that
 stress-tested the toolkit against a ~106k-function title. The title-agnostic wins
@@ -263,6 +282,20 @@ runtime that [@sp00nznet](https://github.com/sp00nznet) and
 that work stands on its own (the `caner/ppu-*`, `c6*/c7*`, and the core SPU
 subsystem commits); the faithful-adoption branch is a parallel re-derivation, and
 credit for the underlying design belongs to them.
+
+
+*The 2026-09 cellGame batch, from LittleBigPlanet*
+- **cellGame content root** — the host directory `/dev_hdd0/game` maps to has to
+  be the same one `ppu_fs.cpp` resolves that mount to. When the two disagreed,
+  a title wrote its game data into one directory and read it back from another,
+  found nothing, and reported the data as **corrupt** rather than missing (#163).
+- **`cellGameContentErrorDialog`** implemented (#162), and the per-build LBP SPU
+  sources made optional (#164).
+
+This batch also surfaced a gap nobody could have found alone: with it, **Twisted
+Metal reaches `cellGameCreateGameData` for the first time**, and that path calls
+`cellGameSetParamString`, which nothing implemented. Exactly the kind of thing a
+port owner cannot see from inside their own title.
 
 ### Paulo Adriano Alves — [@pauloadrianoalves](https://github.com/pauloadrianoalves)
 Initial **PPU boot path** and supporting tooling (PR #3, partially incorporated

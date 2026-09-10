@@ -91,6 +91,7 @@ timeout = 60
 expect  = "timeout"
 env     = { PS3_VFS_ROOT = "vfs/PS3_GAME/USRDIR" }
 render_env = { RSX_LIVE_DRAW = "1" }
+render_timeout = 150
 render_gold = "docs/now_loading.png"
 
 [[port]]
@@ -109,6 +110,7 @@ timeout = 90
 expect  = "any"
 env     = { PS3_VFS_ROOT = "input" }
 render_env = { RSX_LIVE_DRAW = "1" }
+render_timeout = 150
 
 # --- regression subjects: not being worked on, which is exactly why they are
 #     here. These are the ports a shared-runtime change breaks silently. ------
@@ -149,5 +151,10 @@ timeout = 60
 expect  = "timeout"
 env     = { PS3_VFS_ROOT = "input", RD_SPU_INTERP = "1" }
 render_env = { RT_DISPLAY_BY_SIZE = "1", TEX_OFF_BIAS = "3", RSX_ACCUM_FRAME = "1" }
+# A render run is far slower than the headless one -- real backend, and under
+# RD_SPU_INTERP the sim costs ~16M interpreted SPU instructions a frame, about
+# 4 fps. Its first draw lands past 60s, so the headless timeout captures NOTHING
+# and reads as "presented no frame". Measured: 150s reaches the draws.
+render_timeout = 180
 render_gold = "docs/images/ducky.png"
 

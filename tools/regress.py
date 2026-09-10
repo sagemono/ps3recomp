@@ -336,7 +336,13 @@ def run_port(port, build=True, shots=False):
     env.setdefault("PS3_VERBOSE", "0")
 
     expect = port.get("expect", "timeout")
-    timeout = float(port.get("timeout", 60))
+    # A render run is far slower than the headless one -- a real backend, and for
+    # Rubber Ducky an SPU interpreter costing ~16M instructions a frame. Its
+    # first draw lands past the 60s headless budget, so a --shots run on that
+    # budget captured nothing and reported "presented no frame", which looks
+    # exactly like a title that has stopped rendering. It is not.
+    timeout = float(port.get("render_timeout", port.get("timeout", 60)) if shots
+                    else port.get("timeout", 60))
     timed_out = False
     rc = None
     try:
@@ -513,6 +519,31 @@ def cmd_check(ports, args):
         if shots:
             continue                    # the shots report above is the result
         fails, notes = diff(parse_log(gp), parse_log(log))
+
+        # A single run is not a verdict. The FIRST run after a build is the least
+        # trustworthy one there is -- a cold page cache for a 36 MB executable and
+        # its assets shifts guest timing, and titles with race-sensitive SPURS
+        # paths flip on it. YDKJ went 120 milestone keys -> 80 on three
+        # consecutive fresh builds, and 120 -> PASS on three consecutive re-runs
+        # of the very same binary. That cost a session: the drop was bisected to a
+        # PR, reproduced, and a port-side workaround written for a regression that
+        # did not exist.
+        #
+        # So confirm a red before reporting it. The re-run skips the build, which
+        # is where all the time goes, and only a failure BOTH times is a failure.
+        if fails and not args.no_confirm:
+            print("[%s] red on the first run -- confirming (a run straight after "
+                  "a build is the flakiest one)" % name)
+            status2, log2, _ = run_port(port, build=False, shots=False)
+            if status2 == "ok":
+                fails2, notes2 = diff(parse_log(gp), parse_log(log2))
+                if not fails2:
+                    print("[%s] PASS     (first run disagreed: %s -- treated as "
+                          "flake, not a regression)"
+                          % (name, "; ".join(f.split()[0] for f in fails[:4])))
+                    continue
+                fails, notes = fails2, notes2
+
         if fails:
             print("[%s] FAIL     %d regression(s)" % (name, len(fails)))
             for line in fails[:40]:
@@ -549,6 +580,9 @@ def main():
     c.add_argument("--no-build", action="store_true")
     c.add_argument("-v", "--verbose", action="store_true",
                    help="also show NEW / RAISED / ORDER on a passing port")
+    c.add_argument("--no-confirm", action="store_true",
+                   help="report a red on the first run instead of confirming it "
+                        "with a second. Faster, and wrong more often.")
     for q in (r, c):
         q.add_argument("--shots", action="store_true",
                        help="run each port in its README's render configuration "
