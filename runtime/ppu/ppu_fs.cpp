@@ -270,6 +270,17 @@ static void cellFsSdataOpen(ppu_context* ctx)
     uint32_t fd_ptr = (uint32_t)ctx->gpr[5];
     host_path(hpath, sizeof hpath, gpath);
 
+    /* Same NPDRM step cellFsOpen does: an encrypted container is decrypted once
+     * into a cache file and that is opened in its place. This used to be a
+     * second, weaker decryptor local to this function (sdata_decrypt below),
+     * which handled the self-keyed SDATA form only and refused every real EDAT
+     * -- so a title whose data file was EDAT rather than SDATA got "success
+     * without a handle" here while the very same file opened fine through
+     * cellFsOpen. One decryptor, reached from both doors. */
+    { char dec_path[1200];
+      const char* use = edat_resolve(hpath, dec_path, sizeof dec_path);
+      if (use != hpath) snprintf(hpath, sizeof hpath, "%s", use); }
+
     int hfd = open(hpath, O_RDONLY | O_BINARY, 0666);
     if (hfd < 0) {
         fprintf(stderr, "[fs] SdataOpen FAIL '%s' -> '%s'\n", gpath, hpath);
