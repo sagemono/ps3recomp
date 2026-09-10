@@ -43,6 +43,21 @@
 # Ports without a `build` line are still the operator's job to build; they SKIP
 # cleanly until then.
 #
+# Rubber Ducky is deliberately absent, for the same class of reason as flOw.
+#
+# It is a Sony SDK sample recompiled from a DEBUG fSELF -- unencrypted and
+# unstripped, with its symbol map exposed. Nothing else in the gate is built that
+# way and no retail title ever will be, so it was never a fair conformance
+# subject: it exercises a pipeline that had names to work from. It is valuable as
+# ground truth for the lifter and worthless as a statement about whether a change
+# is safe for real games.
+#
+# It did render once (a correct bathroom scene, 2026-08-26, docs/images/ducky.png
+# in its repo) and does not now. That is worth reconciling one day -- what was
+# hand-rolled to get there, and which of it should be general -- but it is not
+# worth holding the gate red for. Its golden is preserved in git history at the
+# commit that removed it.
+
 # flOw is deliberately absent. Its lifted tree is git-ignored and cannot be
 # regenerated, so a golden recorded from it could never be reproduced or
 # explained. It stays a manual title until it is relifted from scratch.
@@ -158,19 +173,3 @@ timeout = 90
 expect  = "timeout"
 env     = { PS3_VFS_ROOT = "input" }
 render_env = { RSX_LIVE_DRAW = "1" }
-
-[[port]]
-name    = "rubberducky"
-dir     = "../ps3games/rubberducky"
-cmd     = ["build-gate/rubberducky", "input/EBOOT.elf"]
-timeout = 60
-expect  = "timeout"
-env     = { PS3_VFS_ROOT = "input", RD_SPU_INTERP = "1" }
-render_env = { RT_DISPLAY_BY_SIZE = "1", TEX_OFF_BIAS = "3", RSX_ACCUM_FRAME = "1" }
-# A render run is far slower than the headless one -- real backend, and under
-# RD_SPU_INTERP the sim costs ~16M interpreted SPU instructions a frame, about
-# 4 fps. Its first draw lands past 60s, so the headless timeout captures NOTHING
-# and reads as "presented no frame". Measured: 150s reaches the draws.
-render_timeout = 180
-render_gold = "docs/images/ducky.png"
-
