@@ -48,6 +48,8 @@ DRIVER = r"""
    typedef pthread_t thr_t;
 #endif
 
+#define MS_CKPT_SECS 2   /* must match runtime/milestone.c */
+
 #define N_THREADS %(N_THREADS)d
 #define N_ITERS   %(N_ITERS)d
 #define N_KEYS    %(N_KEYS)d
@@ -106,7 +108,15 @@ int main(int argc, char** argv)
     }
 
     if (strcmp(mode, "--nodump") == 0) {
-        /* Straight out, no atexit handlers -- what a watchdog kill looks like. */
+        /* What a watchdog kill looks like: keep working past the checkpoint
+         * interval, then straight out with no atexit handlers. The counts on
+         * disk have to come from the periodic checkpoint, not from the dump. */
+#ifdef _WIN32
+        Sleep(1000 * (MS_CKPT_SECS + 1));
+#else
+        sleep(MS_CKPT_SECS + 1);
+#endif
+        worker_body();
         fflush(NULL);
         _exit(0);
     }
@@ -233,8 +243,15 @@ def main():
     stream, counts, kv, saw_end = parse(out)
     check(len(stream) == len(expected_all),
           "all %d keys reached disk without a clean exit" % len(expected_all))
-    check(not saw_end and not counts,
-          "no counts section (as expected -- atexit never ran)")
+    check(not saw_end, "no clean-exit marker (atexit never ran)")
+    # The whole point of the checkpoint: a killed title still says how much it
+    # did, which is what "did rendering stop?" reduces to.
+    check(counts.get("a") == "2-9" and counts.get("b") == "1",
+          "counts survive _exit (periodic checkpoint, not atexit)")
+    bad = sorted(k for k in expected_shared if counts.get(k) not in ("100-999", "1k-9k"))
+    check(not bad,
+          "threaded keys counted in the killed run too%s"
+          % ("" if not bad else " (wrong: %s)" % bad))
     check(kv.get("scalar:answer") == 43 and kv.get("scalar:big") == 1234567890123,
           "scalars survive _exit too (they are written as they are set)")
 

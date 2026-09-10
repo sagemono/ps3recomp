@@ -17,8 +17,11 @@
  *  - It must survive a hang. The interesting failure is a title that stops
  *    making progress, and a process killed on a timeout never reaches atexit().
  *    So the ordered stream is appended to the file as each key is FIRST seen,
- *    not buffered until the end. Occurrence counts and scalars need the clean
- *    exit; the ordering -- the primary signal -- does not.
+ *    not buffered until the end, and the occurrence counts are re-appended
+ *    every couple of seconds -- last block wins. Nothing here needs the clean
+ *    exit, which matters because almost no gated title gets one: an
+ *    atexit-only counts section is a section the regression gate never sees,
+ *    and "did it stop drawing?" is a question only the counts can answer.
  *
  *  - It must cost nothing when unused. With PS3_MILESTONE_OUT unset the whole
  *    module is one relaxed load and a return, so it stays compiled into every
@@ -61,8 +64,9 @@ void ps3_msf(const char* fmt, ...);
  * line for it. */
 void ps3_ms_kv(const char* key, long long value);
 
-/* Write the counts and scalars section. Registered with atexit() on first use;
- * calling it directly is safe and idempotent. */
+/* Write the final counts section and close the log. Registered with atexit() on
+ * first use; calling it directly is safe and idempotent. Counts are also
+ * checkpointed as the run goes, so this is the tidy ending, not the only one. */
 void ps3_ms_dump(void);
 
 #ifdef __cplusplus
