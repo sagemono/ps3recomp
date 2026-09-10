@@ -103,6 +103,8 @@ typedef void (*CellSysutilCallback)(u64 status, u64 param, void* userdata);
 s32 cellSysutilRegisterCallback(s32 slot, CellSysutilCallback func, void* userdata);
 s32 cellSysutilUnregisterCallback(s32 slot);
 s32 cellSysutilCheckCallback(void);
+s32 cellSysutilQueueGuestCallbackArgs(u32 opd, const u64 args[8]);
+s32 cellSysutilQueueGuestCallback(u32 opd, u64 arg0, u64 arg1);
 
 /* Internal HLE completion queue, delivered by the guest's next callback poll. */
 s32 cellSysutilQueueGuestCallback(u32 opd, u64 arg0, u64 arg1);

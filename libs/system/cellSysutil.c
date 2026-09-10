@@ -201,6 +201,10 @@ int cellSysutil_pump_seen(void) { return s_pump_seen; }
 s32 cellSysutilCheckCallback(void)
 {
     drain_guest_completions();
+    /* No cellMsgDialog_pump() here: #155 replaced that mechanism with
+     * drain_guest_completions() above, deferring a dialog answer to this poll
+     * instead of pumping it separately. #156 branched before #155 landed, so its
+     * context still names the old call. */
     {
       if (!s_pump_seen) {
           s_pump_seen = 1;
