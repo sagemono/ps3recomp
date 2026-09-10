@@ -128,3 +128,9 @@ jobs:
           if ($LASTEXITCODE -ne 0) { exit 1 }
           .\test_rsx_primitives.exe
           if ($LASTEXITCODE -ne 0) { exit 1 }
+
+      - name: Run condition semantics regressions
+        run: |
+          cmake -S tests/sync_stress -B build-sync -G Ninja -DCMAKE_C_COMPILER=clang-cl -DCMAKE_BUILD_TYPE=${{ matrix.build_type }}
+          cmake --build build-sync --target test_cond_semantics
+          ctest --test-dir build-sync -R "^cond_" --output-on-failure
