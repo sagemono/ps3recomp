@@ -1791,6 +1791,10 @@ static int spu_smc_microstep(spu_context* ctx)
          * op9 here never matched either (hbrr 0x12033296 has op9 0x24), so a
          * runtime-generated stub carrying a branch hint decoded to UNKNOWN,
          * the microstep bailed, and the SPU fell into branch-to-0. */
+        /* sagemono reached the same fix independently in #166, from a different
+         * witness (hbrr 0x1200048C rather than 0x12033296). Same line, same
+         * diagnosis, arrived at separately -- which is about as good as
+         * corroboration gets for a decode bug. */
         if (op11 == 0x1AC || op7 == 0x08 || op7 == 0x09) { pc += 4; continue; } /* hbr/hbra/hbrr */
 
         { static int _n = 0;
