@@ -427,6 +427,29 @@ for who did what — thank you, everyone.
 
 ## Changelog
 
+### v0.12.1 — *"Downloads, Again"* (September 2026)
+
+*A packaging release. v0.10.0 and v0.11.0 were both tagged and neither was ever*
+*published — their release runs died on macOS with an undeclared*
+*`RtlCaptureStackBackTrace`, so the newest download anyone could get was v0.9.1*
+*from August. That is fixed, and Linux now builds alongside Windows and macOS.*
+
+- **Bundles for all three platforms.** Linux joins the release matrix. It ships
+  as the toolkit and runtime library rather than a game runner, and each bundle's
+  `VERSION.txt` says what its platform can actually do — Windows renders and runs
+  titles through D3D12, macOS renders through Metal but cannot yet load one
+  because the PPU boot scaffold does not run on POSIX, and Linux has no renderer
+  at all. Someone downloading the Linux zip should learn that from the file, not
+  after building something with it.
+- **A dry run works from any branch.** `workflow_dispatch` set the bundle version
+  from the *branch* name, so a branch with a slash in it nested the staging
+  directory and the upload glob found nothing — every platform built, tested and
+  staged, and the run failed anyway.
+- **`cellGame` content root strips `/dev_hdd0`** — *[@sagemono](https://github.com/sagemono)*
+  (#163, landed as #173). `ppu_fs` strips the mount prefix, so guest
+  `/dev_hdd0/game/<id>` resolves to `<root>/game/<id>`; spelling the device out
+  recreated the very split v0.12.0 set out to close, one directory over.
+
 ### v0.12.0 — *"One Tree"* (September 2026)
 
 *Nineteen open pull requests land on one branch. They came from the two people*
