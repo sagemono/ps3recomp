@@ -1213,10 +1213,33 @@ static int64_t sys_spu_thread_write_spu_mb_handler(ppu_context* ctx)
 
     spu_thread_t* t = spu_find_thread(tid);
     if (!t) {
-        fprintf(stderr, "[SPU] write_spu_mb: thread 0x%X not found\n", tid);
-        fflush(stderr);
-        ctx->gpr[3] = (uint64_t)(int64_t)-1;
-        return -1;
+        /* Not the guest's error -- ours. Our SPU threads are not resident:
+         * a group whose work runs on the interpreter reports "1 ran
+         * synchronously" and is gone by the time the PPU writes to it, so a
+         * lookup the title is entitled to expect to succeed fails here.
+         *
+         * Before this syscall was implemented it fell through to the generic
+         * stub, which returns CELL_OK, and every title carried on. A hard
+         * failure instead turns our gap into the title's crash: Rubber
+         * Ducky's spu_printf_handler calls this with the printf port 0x3F,
+         * gets the error, and calls sys_ppu_thread_exit -- taking the scene
+         * load, the shaders and every draw with it. It rendered a complete
+         * bathroom before this landed and drew nothing after.
+         *
+         * So keep the contract every port was built against, and be loud
+         * about it rather than silent.
+         * ponytail: reports success for a word it could not deliver. The
+         * real fix is resident SPU threads, or a printf port that resolves
+         * to its thread; this is the floor until one of those exists. */
+        static int warned = 0;
+        if (warned++ < 8) {
+            fprintf(stderr, "[SPU] write_spu_mb: thread 0x%X not found -- "
+                            "dropping the word and reporting CELL_OK, as the "
+                            "unimplemented stub did\n", tid);
+            fflush(stderr);
+        }
+        ctx->gpr[3] = CELL_OK;
+        return CELL_OK;
     }
 
     /* Preferred path: the worker is alive and blocked in rdch on its own host
